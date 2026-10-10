@@ -36,18 +36,5 @@ export const storage = getStorage(app)
 // preventing the root layout and authentication UI from rendering.
 let modelPromise: Promise<any> | undefined;
 
-export const getVertexModel = () => {
-  if (!modelPromise) {
-    modelPromise = import('firebase/vertexai')
-      .then(({ getVertexAI, getGenerativeModel }) =>
-        getGenerativeModel(getVertexAI(app), { model: 'gemini-2.5-flash' })
-      )
-      .catch((error) => {
-        modelPromise = undefined;
-        throw error;
-      });
-  }
 
-  return modelPromise;
-};
 

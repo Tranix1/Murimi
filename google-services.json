@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "305766598234",
+    "project_id": "murimi-9a3e7",
+    "storage_bucket": "murimi-9a3e7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:305766598234:android:b5860eb91abaca5114ba63",
+        "android_client_info": {
+          "package_name": "com.yayapana.Murimi"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAq-CJ3bLfpHsS7NFus2R6752S6XUzR3O0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
