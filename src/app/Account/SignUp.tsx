@@ -6,7 +6,7 @@ import {
     StyleSheet,
     ScrollView,
     ActivityIndicator,
-    Keyboard,
+    Alert, Keyboard,
     ToastAndroid
 } from 'react-native';
 import Input from '@/components/Input';
@@ -23,6 +23,7 @@ import { Image } from 'expo-image';
 import { useAuth } from '@/context/AuthContext';
 import { AccountType } from '@/types/types';
 import { router } from 'expo-router';
+import { firebaseConfig } from '@/db/fireBaseConfig';
 
 import PhoneInput from '@/components/PhoneInput';
 import { validateReferralCode } from '@/db/operations';
@@ -65,6 +66,7 @@ const Index = ({ setDspLoginOrSignup, setIsSigningUp }: any) => {
 
     const [confirmation, setConfirmation] = useState<any>(null);
 
+    const [verificationId, setVerificationId] = useState("");
     const [otp, setOtp] = useState("");
     const [otpSent, setOtpSent] = useState(false);
 
@@ -137,13 +139,7 @@ const Index = ({ setDspLoginOrSignup, setIsSigningUp }: any) => {
                 }
             }
 
-            if (selectedAccount !== "tracking" && !referrerCode) {
-                setError("Referral code is required");
-            setLoading(false);
-
-                return;
-            }
-
+           
             if (!acceptTerms) {
                 setError("You must accept the terms and privacy policy");
             setLoading(false);
@@ -225,6 +221,7 @@ const Index = ({ setDspLoginOrSignup, setIsSigningUp }: any) => {
 
             const result = await signUp({
                 phoneNumber: `${countryCode.name}${phoneNumber}`,
+                verificationId,
                 referrerCode,
                 accountType: selectedAccount,
                 displayName: fullname,
@@ -271,7 +268,7 @@ const Index = ({ setDspLoginOrSignup, setIsSigningUp }: any) => {
 
 
     return (
-        <ScreenWrapper>
+        <ScreenWrapper fh={false}>
             <ScrollView
                 style={{ flex: 1 }}
                 contentContainerStyle={styles.scrollContainer}
@@ -283,6 +280,7 @@ const Index = ({ setDspLoginOrSignup, setIsSigningUp }: any) => {
                     <Image
                         contentFit="contain"
                         source={colorScheme === "light" ? require('@/assets/trialogo.svg') : require('@/assets/transix_logo_black_bg.png')}
+                        
                         style={styles.logo}
                     />
 

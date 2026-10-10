@@ -194,7 +194,7 @@ const Login = ({ setDspLoginOrSignup }: any) => {
     };  
 
     return (
-        <ScreenWrapper>
+        <ScreenWrapper fh={false}>
             <ScrollView
                 contentContainerStyle={styles.scrollContainer}
                 showsVerticalScrollIndicator={false}

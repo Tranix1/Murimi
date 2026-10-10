@@ -6,6 +6,7 @@ import React, {
   useEffect,
   useState,
 } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import {
   getAuth,
@@ -13,7 +14,30 @@ import {
   signOut,
   updateProfile,
 } from "@react-native-firebase/auth";
-import type { AccountType } from "@/types/types";
+import type { AccountType, CurrentRole } from "@/types/types";
+
+export type SavedAccount = {
+  id: string;
+  name: "acc 1" | "acc 2";
+  currentRole: CurrentRole;
+};
+
+const defaultRole = (accountType: AccountType = "tracking"): CurrentRole => {
+  if (accountType === "fleet") {
+    return { role: "fleet", accType: "fleet", userRole: "owner", fleetId: "", companyName: "", driverId: null, fleetMainAdminId: null, fleetManagerId: null, fleetDispatcherId: null, brokerId: "", referrerCode: null, organizationId: null, phone: null, email: null, billingAddress: null, baseAdress: null, profilePhoto: "" };
+  }
+  if (accountType === "brokerage") {
+    return { role: "brokerage", accType: "brokerage", userRole: "owner", brokerId: "", companyName: "", brokerType: "", fleetId: null, referrerCode: null, organizationId: null, phone: null, email: null, billingAddress: null, baseAdress: null, profilePhoto: "" };
+  }
+  if (accountType === "driver") {
+    return { role: "driver", accType: "driver", userRole: "driver", driverId: "", driverName: "", brokerType: "", fleetId: null, referrerCode: null, organizationId: null, phone: null, email: null, billingAddress: null, baseAdress: null, companyName: "", profilePhoto: "" };
+  }
+  return { role: "general", accType: accountType, userRole: "tracking", companyName: "", driverId: null, fleetId: null, brokerId: "", referrerCode: null, organizationId: null, phone: null, email: null, billingAddress: null, baseAdress: null, profilePhoto: "" };
+};
+
+const accountsStorageKey = (uid: string) => `murimi_accounts_${uid}`;
+const currentRoleStorageKey = (uid: string) => `murimi_currentRole_${uid}`;
+const activeAccountStorageKey = (uid: string) => `murimi_activeAccount_${uid}`;
 
 export type AuthUser = {
   uid: string;
@@ -46,6 +70,11 @@ export type AuthContextValue = {
   user: AuthUser | null;
   isSignedIn: boolean;
   isLoading: boolean;
+  currentRole: CurrentRole;
+  accounts: SavedAccount[];
+  activeAccountName: SavedAccount["name"] | null;
+  createAccount: () => Promise<SavedAccount | null>;
+  switchAccount: (accountId: string) => Promise<boolean>;
 
   // Called after Firebase phone OTP authentication succeeds.
   Login: (input: LoginInput) => Promise<AuthResponse>;
@@ -53,7 +82,7 @@ export type AuthContextValue = {
   // Creates the basic Murimi user profile after OTP verification.
   signUp: (input: SignUpInput) => Promise<AuthResponse>;
 
-  setupUser: (firebaseUser: { uid: string; phoneNumber: string | null; displayName: string | null; email: string | null; photoURL: string | null } | null) => Promise<void>;
+  setupUser: (firebaseUser: { uid: string; phoneNumber: string | null; displayName: string | null; email: string | null; photoURL: string | null } | null, accountType?: AccountType) => Promise<void>;
 
   updateUserProfile: (displayName: string) => Promise<boolean>;
 
@@ -72,11 +101,17 @@ export function AuthProvider({
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isSignedIn, setIsSignedIn] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [currentRole, setCurrentRole] = useState<CurrentRole>(defaultRole());
+  const [accounts, setAccounts] = useState<SavedAccount[]>([]);
+  const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
 
-  const setupUser = async (firebaseUser: { uid: string; phoneNumber: string | null; displayName: string | null; email: string | null; photoURL: string | null } | null) => {
+  const setupUser = async (firebaseUser: { uid: string; phoneNumber: string | null; displayName: string | null; email: string | null; photoURL: string | null } | null, accountType?: AccountType) => {
     if (!firebaseUser) {
       setUser(null);
       setIsSignedIn(false);
+      setAccounts([]);
+      setCurrentRole(defaultRole());
+      setActiveAccountId(null);
       setIsLoading(false);
       return;
     }
@@ -91,6 +126,32 @@ export function AuthProvider({
 
     setUser(appUser);
     setIsSignedIn(true);
+    try {
+      const [storedAccounts, storedRole, storedActiveId] = await Promise.all([
+        AsyncStorage.getItem(accountsStorageKey(firebaseUser.uid)),
+        AsyncStorage.getItem(currentRoleStorageKey(firebaseUser.uid)),
+        AsyncStorage.getItem(activeAccountStorageKey(firebaseUser.uid)),
+      ]);
+      let nextAccounts: SavedAccount[] = storedAccounts ? JSON.parse(storedAccounts) : [];
+      if (!Array.isArray(nextAccounts)) nextAccounts = [];
+      let storedRoleValue: CurrentRole | null = storedRole ? JSON.parse(storedRole) : null;
+      if (!nextAccounts.length && (storedRoleValue || accountType)) {
+        const firstRole = storedRoleValue ?? defaultRole(accountType);
+        nextAccounts = [{ id: "acc1", name: "acc 1", currentRole: firstRole }];
+        await AsyncStorage.setItem(accountsStorageKey(firebaseUser.uid), JSON.stringify(nextAccounts));
+      }
+      const selectedAccount = nextAccounts.find((item) => item.id === storedActiveId) ?? nextAccounts[0];
+      const nextRole: CurrentRole = selectedAccount?.currentRole ?? storedRoleValue ?? defaultRole(accountType);
+      if (selectedAccount) {
+        await AsyncStorage.setItem(activeAccountStorageKey(firebaseUser.uid), selectedAccount.id);
+        await AsyncStorage.setItem(currentRoleStorageKey(firebaseUser.uid), JSON.stringify(nextRole));
+      }
+      setAccounts(nextAccounts);
+      setCurrentRole(nextRole);
+      setActiveAccountId(selectedAccount?.id ?? (nextAccounts[0]?.id ?? null));
+    } catch (error) {
+      console.error("Failed to restore saved accounts:", error);
+    }
     setIsLoading(false);
   };
 
@@ -124,7 +185,7 @@ export function AuthProvider({
         return { success: false, message: "The verified phone number does not match." };
       }
 
-      await setupUser(firebaseUser);
+      await setupUser(firebaseUser, accountType);
 
       return {
         success: true,
@@ -141,7 +202,7 @@ export function AuthProvider({
   };
 
   // Signup: call after phone OTP verification.
-  const signUp = async ({ displayName, phoneNumber }: SignUpInput): Promise<AuthResponse> => {
+  const signUp = async ({ displayName, phoneNumber, accountType }: SignUpInput): Promise<AuthResponse> => {
     try {
       const auth = getAuth();
       const firebaseUser = auth.currentUser;
@@ -170,7 +231,7 @@ export function AuthProvider({
         displayName: name,
       });
 
-      await setupUser(auth.currentUser);
+      await setupUser(auth.currentUser, accountType);
 
       return {
         success: true,
@@ -183,6 +244,46 @@ export function AuthProvider({
         success: false,
         message: error?.message ?? "Signup failed.",
       };
+    }
+  };
+
+  const createAccount = async (): Promise<SavedAccount | null> => {
+    if (!user) return null;
+    if (accounts.length >= 2) return null;
+    const accountNumber = accounts.length + 1;
+    const account: SavedAccount = {
+      id: `acc${accountNumber}`,
+      name: `acc ${accountNumber}` as SavedAccount["name"],
+      currentRole: { ...currentRole },
+    };
+    const nextAccounts = [...accounts, account];
+    try {
+      await AsyncStorage.setItem(accountsStorageKey(user.uid), JSON.stringify(nextAccounts));
+      await AsyncStorage.setItem(currentRoleStorageKey(user.uid), JSON.stringify(account.currentRole));
+      await AsyncStorage.setItem(activeAccountStorageKey(user.uid), account.id);
+      setAccounts(nextAccounts);
+      setCurrentRole(account.currentRole);
+      setActiveAccountId(account.id);
+      return account;
+    } catch (error) {
+      console.error("Failed to save account:", error);
+      return null;
+    }
+  };
+
+  const switchAccount = async (accountId: string): Promise<boolean> => {
+    if (!user) return false;
+    const account = accounts.find((item) => item.id === accountId);
+    if (!account) return false;
+    try {
+      await AsyncStorage.setItem(currentRoleStorageKey(user.uid), JSON.stringify(account.currentRole));
+      await AsyncStorage.setItem(activeAccountStorageKey(user.uid), account.id);
+      setCurrentRole(account.currentRole);
+      setActiveAccountId(account.id);
+      return true;
+    } catch (error) {
+      console.error("Failed to switch account:", error);
+      return false;
     }
   };
 
@@ -217,6 +318,9 @@ export function AuthProvider({
 
       setUser(null);
       setIsSignedIn(false);
+      setAccounts([]);
+      setCurrentRole(defaultRole());
+      setActiveAccountId(null);
 
       return true;
     } catch (error) {
@@ -231,6 +335,11 @@ export function AuthProvider({
         user,
         isSignedIn,
         isLoading,
+        currentRole,
+        accounts,
+        activeAccountName: accounts.find((account) => account.id === activeAccountId)?.name ?? null,
+        createAccount,
+        switchAccount,
         Login,
         signUp,
         setupUser,
