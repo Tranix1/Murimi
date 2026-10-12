@@ -1,270 +1,135 @@
-import React from "react";
-import { Alert, ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
+import { calculateBatchSummary, calculateFinanceSummary } from "@/Utilities/farmCalculations";
+import { calculateInventoryBalances } from "@/Utilities/inventoryCalculations";
 import CustomHeader from "@/components/CustomHeader";
 import ScreenWrapper from "@/components/ScreenWrapper";
 import { ThemedText } from "@/components/ThemedText";
+import { FarmSyncStatus } from "@/components/farm/FarmSyncStatus";
 import { useAuth } from "@/context/AuthContext";
+import { useFarmRecords } from "@/hooks/useFarmRecords";
 import { useThemeColor } from "@/hooks/useThemeColor";
+import type { Batch, DailyRecord, Expense, FarmAsset, FarmPlan, FinancialTransaction, InventoryItem, Purchase, Sale, SlaughterRecord, StockMovement, WeightMeasurement } from "@/types/farm";
+import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
+import { ActivityIndicator, ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
 
-type Batch = {
-  id: string;
-  name: string;
-  age: number;
-  alive: number;
-  deaths: number;
-  sold: number;
-  invested: number;
-  feedKg: number;
-  liveWeight: number | null;
-  dressedWeight: number | null;
-  sales: number;
-};
-
-const batches: Batch[] = [
-  { id: "batch-001", name: "Batch 001", age: 26, alive: 96, deaths: 4, sold: 0, invested: 307.2, feedKg: 250, liveWeight: 1.1, dressedWeight: null, sales: 0 },
-  { id: "batch-002", name: "Batch 002", age: 7, alive: 150, deaths: 0, sold: 0, invested: 180, feedKg: 65, liveWeight: null, dressedWeight: null, sales: 0 },
-];
-
-const money = (value: number | null) => value == null ? "—" : `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const weight = (value: number | null) => value == null ? "—" : `${value.toFixed(2)} kg`;
-
-function comingSoon(title: string) {
-  Alert.alert(title, `${title} will be connected here soon.`);
-}
-
-function openBatch(batch: Batch) {
-  router.push({ pathname: "/Batches/BatchDetails" as never, params: { batchId: batch.id } });
-}
-
-function openSales(batch: Batch) {
-  router.push({ pathname: "/Batches/Sales" as never, params: { batchId: batch.id } });
-}
-
-function SummaryCard({ title, value, caption, icon, onPress }: { title: string; value: string; caption: string; icon: keyof typeof Ionicons.glyphMap; onPress: () => void }) {
-  const colors = {
-    surface: useThemeColor("backgroundLight"),
-    border: useThemeColor("border"),
-    accent: useThemeColor("accent"),
-    muted: useThemeColor("textlight"),
-    text: useThemeColor("text"),
-  };
-  return (
-    <TouchableOpacity activeOpacity={0.8} onPress={onPress} style={[styles.summaryCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-      <View style={styles.summaryIconRow}>
-        <Ionicons name={icon} size={19} color={colors.accent} />
-        <Ionicons name="open-outline" size={16} color={colors.muted} />
-      </View>
-      <ThemedText type="tiny" color={colors.muted}>{title}</ThemedText>
-      <ThemedText type="subtitle" color={colors.text} style={styles.summaryValue}>{value}</ThemedText>
-      <ThemedText type="tiny" color={colors.muted}>{caption}</ThemedText>
-    </TouchableOpacity>
-  );
-}
-
-function BatchCard({ batch }: { batch: Batch }) {
-  const surface = useThemeColor("backgroundLight");
-  const border = useThemeColor("border");
-  const accent = useThemeColor("accent");
-  const muted = useThemeColor("textlight");
-  const text = useThemeColor("text");
-  const aliveCost = batch.alive > 0 ? batch.invested / batch.alive : null;
-
-  return (
-    <View style={[styles.batchCard, { backgroundColor: surface, borderColor: border }]}>
-      <TouchableOpacity activeOpacity={0.8} onPress={() => openBatch(batch)} style={styles.batchMain}>
-        <View style={styles.batchTop}>
-          <View style={[styles.batchIcon, { backgroundColor: `${accent}16` }]}>
-            <Ionicons name="leaf-outline" size={22} color={accent} />
-          </View>
-          <View style={styles.batchNameGroup}>
-            <ThemedText type="defaultSemiBold" color={text}>{batch.name}</ThemedText>
-            <ThemedText type="tiny" color={muted}>Day {batch.age} · {batch.alive} alive</ThemedText>
-          </View>
-          <View style={[styles.statusPill, { backgroundColor: `${accent}16` }]}>
-            <ThemedText type="tiny" color={accent} style={styles.statusText}>Active</ThemedText>
-          </View>
-        </View>
-
-        <View style={[styles.divider, { backgroundColor: border }]} />
-        <View style={styles.batchFacts}>
-          <Fact label="Invested" value={money(batch.invested)} />
-          <Fact label="Feed used" value={`${batch.feedKg.toLocaleString()} kg`} />
-        </View>
-        <View style={[styles.divider, { backgroundColor: border }]} />
-        <ThemedText type="defaultSemiBold" color={text} style={styles.performanceTitle}>Bird performance</ThemedText>
-        <View style={styles.performanceGrid}>
-          <Fact label="Cost per live bird" value={money(aliveCost)} />
-          <Fact label="Average live weight" value={weight(batch.liveWeight)} />
-          <Fact label="Birds sold" value={String(batch.sold)} />
-          <Fact label="Deaths" value={String(batch.deaths)} />
-          <Fact label="Dressed weight" value={weight(batch.dressedWeight)} />
-          <Fact label="Birds alive" value={String(batch.alive)} />
-        </View>
-      </TouchableOpacity>
-
-      <View style={[styles.salesRow, { borderTopColor: border }]}>
-        <View style={styles.salesSummary}>
-          <ThemedText type="tiny" color={muted}>Cash collected</ThemedText>
-          <ThemedText type="defaultSemiBold" color={accent}>{money(batch.sales)}</ThemedText>
-        </View>
-        <TouchableOpacity onPress={() => openSales(batch)} activeOpacity={0.8} style={[styles.salesButton, { backgroundColor: accent }]}>
-          <Ionicons name="add" size={18} color="#FFFFFF" />
-          <ThemedText type="tiny" style={styles.salesButtonText}>Record sale</ThemedText>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-}
-
-function Fact({ label, value }: { label: string; value: string }) {
-  const muted = useThemeColor("textlight");
-  const text = useThemeColor("text");
-  return (
-    <View style={styles.fact}>
-      <ThemedText type="tiny" color={muted}>{label}</ThemedText>
-      <ThemedText type="defaultSemiBold" color={text} style={styles.factValue}>{value}</ThemedText>
-    </View>
-  );
-}
+const money = (amount: number) => `$${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function Home() {
   const { activeAccountName, currentRole } = useAuth();
   const accent = useThemeColor("accent");
-  const surface = useThemeColor("backgroundLight");
   const border = useThemeColor("border");
   const muted = useThemeColor("textlight");
   const text = useThemeColor("text");
-  const totalBirds = batches.reduce((sum, batch) => sum + batch.alive, 0);
-  const totalSales = batches.reduce((sum, batch) => sum + batch.sales, 0);
+  const surface = useThemeColor("backgroundLight");
+  const { records: batches, isLoading, error } = useFarmRecords<Batch>("batches");
+  const { records: daily } = useFarmRecords<DailyRecord>("dailyRecords");
+  const { records: expenses } = useFarmRecords<Expense>("expenses");
+  const { records: purchases } = useFarmRecords<Purchase>("purchases");
+  const { records: sales } = useFarmRecords<Sale>("sales");
+  const { records: weights } = useFarmRecords<WeightMeasurement>("weights");
+  const { records: slaughter } = useFarmRecords<SlaughterRecord>("slaughter");
+  const { records: transactions } = useFarmRecords<FinancialTransaction>("transactions");
+  const { records: assets } = useFarmRecords<FarmAsset>("assets");
+  const { records: plans } = useFarmRecords<FarmPlan>("plans");
+  const { records: inventoryItems } = useFarmRecords<InventoryItem>("stock");
+  const { records: stockMovements } = useFarmRecords<StockMovement>("stockMovements");
 
+  const batchSummaries = batches.map((batch) => ({
+    batch,
+    summary: calculateBatchSummary(batch,
+      daily.filter((entry) => entry.batchId === batch.id),
+      expenses.filter((entry) => entry.batchId === batch.id),
+      sales.filter((entry) => entry.batchId === batch.id),
+      weights.filter((entry) => entry.batchId === batch.id),
+      slaughter.filter((entry) => entry.batchId === batch.id), purchases, stockMovements),
+  }));
+  const inventory = calculateInventoryBalances(inventoryItems, purchases, stockMovements);
+  const finance = calculateFinanceSummary({ transactions, sales, expenses, purchases, assets, inventoryValue: inventory.totalValue, stockMovements });
+  const totalAlive = batchSummaries.reduce((sum, item) => sum + item.summary.birdsAlive, 0);
+  const today = new Date().toISOString().slice(0, 10);
+  const upcoming = plans.filter((plan) => plan.status !== "completed" && plan.status !== "cancelled" && plan.plannedDate >= today).sort((a, b) => a.plannedDate.localeCompare(b.plannedDate)).slice(0, 3);
+
+  const go = (path: string) => router.push(path as never);
   return (
     <ScreenWrapper fh={false}>
       <CustomHeader pageTitle="Murimi" />
       <View style={[styles.accountStrip, { borderBottomColor: border }]}>
-        <View style={[styles.accountDot, { backgroundColor: accent }]} />
+        <Ionicons name="checkmark-circle" size={15} color={accent} />
         <ThemedText type="tiny" color={muted}>Selected account</ThemedText>
         <ThemedText type="tiny" color={text} style={styles.accountName}>{activeAccountName ?? "acc 1"}</ThemedText>
-        <ThemedText type="tiny" color={muted}>· {currentRole.accType}</ThemedText>
+        {currentRole?.accType ? <ThemedText type="tiny" color={muted}>· {currentRole.accType}</ThemedText> : null}
       </View>
-
+      <FarmSyncStatus />
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.welcome}>
-          <View style={styles.welcomeText}>
-            <ThemedText type="title" color={text} style={styles.pageTitle}>Farm overview</ThemedText>
-            <ThemedText type="default" color={muted} style={styles.pageSubtitle}>A quick look at your farm activity.</ThemedText>
+        <View style={styles.heading}>
+          <View style={styles.headingCopy}>
+            <ThemedText type="title" color={text}>Farm overview</ThemedText>
+            <ThemedText type="tiny" color={muted}>Live records for your selected account</ThemedText>
           </View>
-          <View style={[styles.batchCount, { backgroundColor: `${accent}16` }]}>
+          <View style={[styles.count, { backgroundColor: `${accent}18` }]}>
             <ThemedText type="defaultSemiBold" color={accent}>{batches.length}</ThemedText>
             <ThemedText type="tiny" color={accent}>batches</ThemedText>
           </View>
         </View>
 
-        <ThemedText type="subtitle" color={text} style={styles.sectionTitle}>Farm summary</ThemedText>
-        <View style={styles.summaryGrid}>
-          <SummaryCard title="Working capital" value="—" caption="Available funds" icon="wallet-outline" onPress={() => comingSoon("Working capital")} />
-          <SummaryCard title="Farm assets" value="—" caption="Equipment and housing" icon="business-outline" onPress={() => comingSoon("Farm assets")} />
+        <View style={styles.metrics}>
+          <MetricCard icon="wallet-outline" label="Working capital" value={money(finance.workingCapital)} detail="Cash + receivables + inventory − payables" onPress={() => go("/(tabs)/finances")} />
+          <MetricCard icon="business-outline" label="Fixed assets" value={money(finance.fixedAssets)} detail="Estimated current value" onPress={() => go("/Assets/Index")} />
+          <MetricCard icon="cash-outline" label="Sales revenue" value={money(finance.revenue)} detail={`${money(finance.receivables)} outstanding`} onPress={() => go("/(tabs)/finances")} />
+          <MetricCard icon="leaf-outline" label="Birds alive" value={totalAlive.toLocaleString()} detail="Across all batches" onPress={() => go("/(tabs)/batches")} />
         </View>
 
-        <TouchableOpacity activeOpacity={0.8} onPress={() => comingSoon("Sales summary")} style={[styles.salesCard, { backgroundColor: accent }]}>
-          <View style={[styles.salesCardIcon, { backgroundColor: "#FFFFFF24" }]}>
-            <Ionicons name="trending-up-outline" size={22} color="#FFFFFF" />
-          </View>
-          <View style={styles.salesCardText}>
-            <ThemedText type="tiny" style={styles.salesCardLabel}>Cash collected from sales</ThemedText>
-            <ThemedText type="subtitle" style={styles.salesCardAmount}>{money(totalSales)}</ThemedText>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color="#FFFFFF" />
-        </TouchableOpacity>
-
         <View style={styles.sectionHeader}>
-          <View style={styles.sectionCopy}>
-            <ThemedText type="subtitle" color={text} style={styles.sectionTitle}>Production batches</ThemedText>
-            <ThemedText type="tiny" color={muted}>{batches.length} batches · {totalBirds} birds alive</ThemedText>
-          </View>
-          <TouchableOpacity activeOpacity={0.75} onPress={() => comingSoon("All batches")}>
-            <ThemedText type="tiny" color={accent} style={styles.viewAll}>View all</ThemedText>
+          <View><ThemedText type="subtitle" color={text}>Production batches</ThemedText><ThemedText type="tiny" color={muted}>{batches.length} recorded · {totalAlive.toLocaleString()} alive</ThemedText></View>
+          <TouchableOpacity onPress={() => go("/(tabs)/batches")}><ThemedText type="tiny" color={accent} style={styles.link}>View all</ThemedText></TouchableOpacity>
+        </View>
+        {isLoading ? <ActivityIndicator color={accent} style={styles.loader} /> : error ? <Notice text={`Batches could not load: ${error}`} /> : batches.length === 0 ? (
+          <TouchableOpacity onPress={() => go("/Batches/CreateBatch")} activeOpacity={0.75} style={[styles.emptyCard, { backgroundColor: surface, borderColor: border }]}>
+            <View style={[styles.actionIcon, { backgroundColor: `${accent}18` }]}><Ionicons name="add" size={22} color={accent} /></View>
+            <View style={styles.flex}><ThemedText type="defaultSemiBold" color={text}>Create your first batch</ThemedText><ThemedText type="tiny" color={muted}>Start recording production for this account.</ThemedText></View>
+            <Ionicons name="chevron-forward" size={19} color={muted} />
           </TouchableOpacity>
+        ) : batchSummaries.slice(0, 4).map(({ batch, summary }) => (
+          <TouchableOpacity key={batch.id} activeOpacity={0.8} onPress={() => router.push({ pathname: "/Batches/BatchDetails" as never, params: { batchId: batch.id } })} style={[styles.batchCard, { backgroundColor: surface, borderColor: border }]}>
+            <View style={[styles.batchIcon, { backgroundColor: `${accent}18` }]}><Ionicons name="leaf-outline" size={20} color={accent} /></View>
+            <View style={styles.flex}><ThemedText type="defaultSemiBold" color={text}>{batch.batchNumber ? `Batch ${batch.batchNumber}` : batch.name}</ThemedText><ThemedText type="tiny" color={muted}>{batch.enterprise} · {batch.stockType} · {summary.birdsAlive.toLocaleString()} alive</ThemedText></View>
+            <View style={styles.batchEnd}><ThemedText type="tiny" color={accent}>{batch.status.replace("_", " ")}</ThemedText><Ionicons name="chevron-forward" size={16} color={muted} /></View>
+          </TouchableOpacity>
+        ))}
+
+        <View style={styles.sectionHeader}><ThemedText type="subtitle" color={text}>Quick actions</ThemedText></View>
+        <View style={styles.quickActions}>
+          <QuickAction icon="add-circle-outline" label="New batch" onPress={() => go("/Batches/CreateBatch")} />
+          <QuickAction icon="today-outline" label="Record today" onPress={() => batches[0] ? router.push({ pathname: "/Batches/RecordToday" as never, params: { batchId: batches[0].id } }) : go("/Batches/CreateBatch")} />
+          <QuickAction icon="calendar-outline" label="Add plan" onPress={() => go("/Plans/Create")} />
+          <QuickAction icon="cart-outline" label="Record Purchase" onPress={() => go("/Farm/RecordPurchase")} />
         </View>
 
-        <TouchableOpacity activeOpacity={0.8} onPress={() => router.push("/Batches/CreateBatch" as never)} style={[styles.createBatch, { backgroundColor: surface, borderColor: border }]}>
-          <View style={[styles.createIcon, { backgroundColor: `${accent}16` }]}>
-            <Ionicons name="add" size={22} color={accent} />
-          </View>
-          <View style={styles.createCopy}>
-            <ThemedText type="defaultSemiBold" color={text}>Create a batch</ThemedText>
-            <ThemedText type="tiny" color={muted}>Add a new group of birds</ThemedText>
-          </View>
-          <Ionicons name="chevron-forward" size={19} color={muted} />
-        </TouchableOpacity>
-
-        <View style={styles.batchList}>{batches.map((batch) => <BatchCard key={batch.id} batch={batch} />)}</View>
-
-        <View style={styles.sectionHeader}>
-          <ThemedText type="subtitle" color={text} style={styles.sectionTitle}>Farm reminder</ThemedText>
-        </View>
-        <View style={[styles.reminder, { backgroundColor: surface, borderColor: border }]}>
-          <View style={[styles.reminderIcon, { backgroundColor: `${accent}16` }]}>
-            <Ionicons name="clipboard-outline" size={19} color={accent} />
-          </View>
-          <View style={styles.reminderCopy}>
-            <ThemedText type="defaultSemiBold" color={text}>Keep batch records up to date</ThemedText>
-            <ThemedText type="tiny" color={muted} style={styles.reminderText}>Record feed, water, deaths and weights to follow progress.</ThemedText>
-          </View>
-        </View>
+        <View style={styles.sectionHeader}><View><ThemedText type="subtitle" color={text}>Upcoming plans</ThemedText><ThemedText type="tiny" color={muted}>Your saved reminders</ThemedText></View><TouchableOpacity onPress={() => go("/Plans/Index")}><ThemedText type="tiny" color={accent} style={styles.link}>See all</ThemedText></TouchableOpacity></View>
+        {upcoming.length ? upcoming.map((plan) => <View key={plan.id} style={[styles.planRow, { backgroundColor: surface, borderColor: border }]}><View style={[styles.planDate, { backgroundColor: `${accent}18` }]}><ThemedText type="tiny" color={accent}>{plan.plannedDate.slice(5)}</ThemedText></View><View style={styles.flex}><ThemedText type="defaultSemiBold" color={text}>{plan.name}</ThemedText><ThemedText type="tiny" color={muted}>{plan.category} · {money(plan.amount)} · {plan.status.replaceAll("_", " ")}</ThemedText></View></View>) : <ThemedText type="tiny" color={muted} style={styles.noPlans}>No upcoming plans recorded.</ThemedText>}
       </ScrollView>
     </ScreenWrapper>
   );
 }
 
+function MetricCard({ icon, label, value, detail, onPress }: { icon: keyof typeof Ionicons.glyphMap; label: string; value: string; detail: string; onPress: () => void }) {
+  const surface = useThemeColor("backgroundLight"); const border = useThemeColor("border"); const accent = useThemeColor("accent"); const muted = useThemeColor("textlight"); const text = useThemeColor("text");
+  return <TouchableOpacity onPress={onPress} style={[styles.metricCard, { backgroundColor: surface, borderColor: border }]}><Ionicons name={icon} size={19} color={accent} /><ThemedText type="tiny" color={muted}>{label}</ThemedText><ThemedText type="defaultSemiBold" color={text} style={styles.metricValue}>{value}</ThemedText><ThemedText type="tiny" color={muted}>{detail}</ThemedText></TouchableOpacity>;
+}
+
+function QuickAction({ icon, label, onPress }: { icon: keyof typeof Ionicons.glyphMap; label: string; onPress: () => void }) {
+  const surface = useThemeColor("backgroundLight"); const border = useThemeColor("border"); const accent = useThemeColor("accent"); const text = useThemeColor("text");
+  return <TouchableOpacity onPress={onPress} style={[styles.quickAction, { backgroundColor: surface, borderColor: border }]}><Ionicons name={icon} size={23} color={accent} /><ThemedText type="tiny" color={text}>{label}</ThemedText></TouchableOpacity>;
+}
+
+function Notice({ text }: { text: string }) { const muted = useThemeColor("textlight"); return <ThemedText type="tiny" color={muted} style={styles.noPlans}>{text}</ThemedText>; }
+
 const styles = StyleSheet.create({
-  accountStrip: { minHeight: 38, paddingHorizontal: 20, flexDirection: "row", alignItems: "center", gap: 7, borderBottomWidth: StyleSheet.hairlineWidth },
-  accountDot: { width: 7, height: 7, borderRadius: 4 },
-  accountName: { fontWeight: "700" },
-  scroll: { flex: 1 },
-  content: { paddingHorizontal: 18, paddingTop: 20, paddingBottom: 30 },
-  welcome: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 24 },
-  welcomeText: { flex: 1, paddingRight: 12 },
-  pageTitle: { fontSize: 24, lineHeight: 30 },
-  pageSubtitle: { fontSize: 14, marginTop: 4 },
-  batchCount: { minWidth: 58, minHeight: 54, borderRadius: 16, alignItems: "center", justifyContent: "center" },
-  sectionTitle: { fontSize: 18, lineHeight: 24 },
-  summaryGrid: { flexDirection: "row", gap: 12, marginTop: 12, marginBottom: 16 },
-  summaryCard: { flex: 1, minWidth: 0, borderWidth: 1, borderRadius: 17, padding: 14, gap: 6 },
-  summaryIconRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 5 },
-  summaryValue: { fontSize: 21, lineHeight: 26 },
-  salesCard: { borderRadius: 18, padding: 16, flexDirection: "row", alignItems: "center", marginBottom: 28 },
-  salesCardIcon: { width: 44, height: 44, borderRadius: 14, alignItems: "center", justifyContent: "center", marginRight: 12 },
-  salesCardText: { flex: 1, gap: 3 },
-  salesCardLabel: { color: "#FFFFFFD9" },
-  salesCardAmount: { color: "#FFFFFF", fontSize: 22, lineHeight: 27 },
-  sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 13 },
-  sectionCopy: { flex: 1, gap: 4 },
-  viewAll: { fontWeight: "700", paddingVertical: 8, paddingLeft: 10 },
-  createBatch: { borderWidth: 1, borderRadius: 16, padding: 13, flexDirection: "row", alignItems: "center", marginBottom: 15 },
-  createIcon: { width: 42, height: 42, borderRadius: 13, alignItems: "center", justifyContent: "center", marginRight: 12 },
-  createCopy: { flex: 1, gap: 3 },
-  batchList: { gap: 14, marginBottom: 28 },
-  batchCard: { borderWidth: 1, borderRadius: 18, overflow: "hidden" },
-  batchMain: { padding: 15 },
-  batchTop: { flexDirection: "row", alignItems: "center" },
-  batchIcon: { width: 44, height: 44, borderRadius: 14, alignItems: "center", justifyContent: "center", marginRight: 11 },
-  batchNameGroup: { flex: 1, gap: 3 },
-  statusPill: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
-  statusText: { fontWeight: "700" },
-  divider: { height: StyleSheet.hairlineWidth, marginVertical: 14 },
-  batchFacts: { flexDirection: "row", gap: 10 },
-  fact: { flex: 1, minWidth: 0, gap: 3 },
-  factValue: { fontSize: 14 },
-  performanceTitle: { fontSize: 14, marginBottom: 12 },
-  performanceGrid: { flexDirection: "row", flexWrap: "wrap", rowGap: 14 },
-  salesRow: { borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: 15, paddingVertical: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  salesSummary: { gap: 2 },
-  salesButton: { borderRadius: 11, minHeight: 38, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 4 },
-  salesButtonText: { color: "#FFFFFF", fontWeight: "700" },
-  reminder: { borderWidth: 1, borderRadius: 16, padding: 14, flexDirection: "row", alignItems: "flex-start", gap: 11 },
-  reminderIcon: { width: 38, height: 38, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  reminderCopy: { flex: 1, gap: 4, paddingTop: 1 },
-  reminderText: { lineHeight: 18 },
+  accountStrip: { minHeight: 36, paddingHorizontal: 20, flexDirection: "row", alignItems: "center", gap: 7, borderBottomWidth: StyleSheet.hairlineWidth }, accountName: { fontWeight: "700" },
+  scroll: { flex: 1 }, content: { paddingHorizontal: 18, paddingTop: 20, paddingBottom: 32 }, heading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }, headingCopy: { gap: 4 }, count: { minWidth: 58, minHeight: 52, borderRadius: 15, alignItems: "center", justifyContent: "center" },
+  metrics: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 26 }, metricCard: { width: "48%", flexGrow: 1, minHeight: 130, borderWidth: 1, borderRadius: 16, padding: 13, gap: 5 }, metricValue: { fontSize: 19 },
+  sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12, marginTop: 3 }, link: { fontWeight: "700", padding: 7 }, loader: { paddingVertical: 20 },
+  emptyCard: { borderWidth: 1, borderRadius: 16, padding: 13, flexDirection: "row", alignItems: "center", gap: 11, marginBottom: 22 }, actionIcon: { width: 42, height: 42, borderRadius: 13, alignItems: "center", justifyContent: "center" }, flex: { flex: 1, gap: 4 },
+  batchCard: { borderWidth: 1, borderRadius: 15, padding: 12, flexDirection: "row", alignItems: "center", gap: 11, marginBottom: 9 }, batchIcon: { width: 40, height: 40, borderRadius: 13, alignItems: "center", justifyContent: "center" }, batchEnd: { alignItems: "flex-end", gap: 5 },
+  quickActions: { flexDirection: "row", flexWrap: "wrap", gap: 9, marginBottom: 24 }, quickAction: { flexBasis: "48%", flexGrow: 1, borderWidth: 1, borderRadius: 14, minHeight: 76, alignItems: "center", justifyContent: "center", gap: 7 }, planRow: { borderWidth: 1, borderRadius: 14, padding: 11, flexDirection: "row", alignItems: "center", gap: 11, marginBottom: 8 }, planDate: { minWidth: 48, height: 40, borderRadius: 12, alignItems: "center", justifyContent: "center" }, noPlans: { paddingVertical: 6, marginBottom: 12 },
 });

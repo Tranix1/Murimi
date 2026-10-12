@@ -39,7 +39,9 @@
       "@react-native-firebase/auth",
       "@react-native-firebase/analytics",
       "expo-image",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-sqlite",
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true,

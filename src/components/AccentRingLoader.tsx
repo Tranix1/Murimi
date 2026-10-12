@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import { Animated, Easing, View } from "react-native";
 
 interface AccentRingLoaderProps {
@@ -16,7 +16,7 @@ export default function AccentRingLoader({
   dotSize = 8,
   durationMs = 1200,
 }: AccentRingLoaderProps) {
-  const rotate = useRef(new Animated.Value(0)).current;
+  const [rotate] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     const anim = Animated.loop(

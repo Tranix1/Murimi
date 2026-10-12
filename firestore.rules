@@ -1,0 +1,23 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Farm records are scoped to the authenticated owner's account path.
+    match /users/{userId}/farmAccounts/{accountId}/{document=**} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow create: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.ownerId == userId
+        && request.resource.data.accountId == accountId;
+      allow update: if request.auth != null
+        && request.auth.uid == userId
+        && resource.data.ownerId == userId
+        && resource.data.accountId == accountId
+        && request.resource.data.ownerId == userId
+        && request.resource.data.accountId == accountId;
+      allow delete: if request.auth != null
+        && request.auth.uid == userId
+        && resource.data.ownerId == userId
+        && resource.data.accountId == accountId;
+    }
+  }
+}

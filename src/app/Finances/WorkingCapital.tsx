@@ -1,0 +1,25 @@
+import { BatchPage } from "@/app/Batches/_components";
+import { ThemedText } from "@/components/ThemedText";
+import { useAuth } from "@/context/AuthContext";
+import { useFarmRecords } from "@/hooks/useFarmRecords";
+import { useThemeColor } from "@/hooks/useThemeColor";
+import type { Batch, Expense, FarmAsset, FarmPlan, FinancialTransaction, InventoryItem, Purchase, Sale, StockMovement } from "@/types/farm";
+import { calculateFinanceSummary } from "@/Utilities/farmCalculations";
+import { calculateInventoryBalances } from "@/Utilities/inventoryCalculations";
+import { router } from "expo-router";
+import { ScrollView, StyleSheet, View } from "react-native";
+
+const money = (v: number) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export default function WorkingCapitalScreen() {
+  const { activeAccountName } = useAuth();
+  const { records: transactions } = useFarmRecords<FinancialTransaction>("transactions"); const { records: sales } = useFarmRecords<Sale>("sales"); const { records: expenses } = useFarmRecords<Expense>("expenses"); const { records: assets } = useFarmRecords<FarmAsset>("assets"); const { records: batches } = useFarmRecords<Batch>("batches"); const { records: plans } = useFarmRecords<FarmPlan>("plans"); const { records: purchases } = useFarmRecords<Purchase>("purchases"); const { records: inventoryItems } = useFarmRecords<InventoryItem>("stock"); const { records: stockMovements } = useFarmRecords<StockMovement>("stockMovements");
+  const inventory = calculateInventoryBalances(inventoryItems, purchases, stockMovements);
+  const summary = calculateFinanceSummary({ transactions, sales, expenses, assets, purchases, stockMovements, inventoryValue: inventory.totalValue }); const surface = useThemeColor("backgroundLight"); const border = useThemeColor("border"); const text = useThemeColor("text"); const muted = useThemeColor("textlight");
+  const active = batches.filter((batch) => batch.status !== "completed" && batch.status !== "archived");
+  const invested = (batch: Batch) => batch.initialQuantity * (batch.costPerUnit ?? 0) + batch.transportCost + batch.setupCost;
+  const receivedFromCustomers = transactions.filter((entry) => entry.direction === "inflow" && entry.category === "sale_payment").reduce((sum, entry) => sum + entry.amount, 0);
+  const plannedSpend = plans.filter((plan) => ["planned", "committed", "partially_completed"].includes(plan.status)).reduce((sum, plan) => sum + Math.max(0, plan.amount - plan.actualAmount), 0);
+  const rows = [["Cash available", summary.availableCash], ["Customer payments received", receivedFromCustomers], ["Money owed by customers", summary.receivables], ["Money owed to suppliers", -summary.payables], ["Consumable inventory", summary.inventoryValue], ["Fixed assets", summary.fixedAssets], ["Working capital", summary.workingCapital], ["Active batch investment (separate)", active.reduce((sum, batch) => sum + invested(batch), 0)], ["Upcoming planned expenditure", plannedSpend]] as const;
+  return <BatchPage title="Working capital"><ScrollView contentContainerStyle={styles.body}><ThemedText type="tiny" color={muted}>Breakdown for {activeAccountName ?? "the selected farm account"}. Working capital is cash + receivables + recorded consumable inventory − payables. Batch investment and planned spend are shown separately.</ThemedText><View style={[styles.card, { backgroundColor: surface, borderColor: border }]}>{rows.map(([label, value]) => <View key={label} style={[styles.row, { borderBottomColor: border }]}><ThemedText type="tiny" color={muted}>{label}</ThemedText><ThemedText type="defaultSemiBold" color={text}>{money(value)}</ThemedText></View>)}</View><ThemedText type="subtitle" color={text}>Active batches</ThemedText>{active.length ? active.map((batch) => <View key={batch.id} style={[styles.card, { backgroundColor: surface, borderColor: border }]}><ThemedText type="defaultSemiBold" color={text}>{batch.name}</ThemedText><ThemedText type="tiny" color={muted}>{batch.status.replaceAll("_", " ")} · initial stock, transport and setup</ThemedText><ThemedText type="tiny" color={text}>Investment recorded: {money(invested(batch))}</ThemedText></View>) : <ThemedText type="tiny" color={muted}>No active batches recorded.</ThemedText>}<ThemedText type="tiny" color={muted}>Inventory value uses costs from tracked consumable receipts and recorded usage. Untracked stock, livestock valuation, and unpriced adjustments are excluded. Fixed assets remain separate. Payables include outstanding purchase and expense balances; no depreciation is estimated.</ThemedText><ThemedText type="tiny" color={text} onPress={() => router.push("/(tabs)/finances" as never)}>Back to finances</ThemedText></ScrollView></BatchPage>;
+}
+const styles = StyleSheet.create({ body: { padding: 18, gap: 15 }, card: { borderWidth: 1, borderRadius: 16, paddingHorizontal: 14 }, row: { minHeight: 54, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 } });

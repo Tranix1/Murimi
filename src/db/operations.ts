@@ -196,7 +196,7 @@ export const fetchDocuments = async (
         const querySnapshot = await Promise.race([querySnapshotPromise, timeoutPromise]) as any;
 
         const lastVisible = querySnapshot.docs[querySnapshot.docs.length - 1];
-        const data = querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        const data = querySnapshot.docs.map((doc: DocumentData & { id: string }) => ({ id: doc.id, ...doc.data() }));
 
         return { data, lastVisible };
     } catch (error) {

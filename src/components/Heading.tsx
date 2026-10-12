@@ -6,7 +6,7 @@ import { useRouter } from 'expo-router'
 import { wp } from '@/constants/common'
 import { useThemeColor } from '@/hooks/useThemeColor'
 
-const Heading = ({ page = 'Page', rightComponent = <></>, overrideBack = null }: { page?: string; rightComponent?: JSX.Element; overrideBack?: (() => void) | null }) => {
+const Heading = ({ page = 'Page', rightComponent = <></>, overrideBack = null }: { page?: string; rightComponent?: React.ReactElement; overrideBack?: (() => void) | null }) => {
     const router = useRouter();
     const icon = useThemeColor('icon');
     return (

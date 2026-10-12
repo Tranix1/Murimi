@@ -72,6 +72,7 @@ export type AuthContextValue = {
   isLoading: boolean;
   currentRole: CurrentRole;
   accounts: SavedAccount[];
+  activeAccountId: string | null;
   activeAccountName: SavedAccount["name"] | null;
   createAccount: () => Promise<SavedAccount | null>;
   switchAccount: (accountId: string) => Promise<boolean>;
@@ -337,6 +338,7 @@ export function AuthProvider({
         isLoading,
         currentRole,
         accounts,
+        activeAccountId,
         activeAccountName: accounts.find((account) => account.id === activeAccountId)?.name ?? null,
         createAccount,
         switchAccount,

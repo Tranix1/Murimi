@@ -101,16 +101,7 @@ const ScreenWrapper = ({
         </View>
       )}
 
-    <StatusBar
-  style="auto"
-  backgroundColor={
-    showStatus
-      ? isConnected
-        ? '#81C784'
-        : coolGray
-      : background
-  }
-/>
+    <StatusBar style="auto" />
 
       {/* Main content */}
       <GestureHandlerRootView

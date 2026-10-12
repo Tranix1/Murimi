@@ -1,7 +1,6 @@
 import { ImageSourcePropType } from "react-native";
 import { ImagePickerAsset } from "expo-image-picker";
 import { GetDerivedStateFromError } from "react";
-import { getDefaultPaymentTerms } from "@/components/PaymentTerms";
 
 export type AccountType = 'general' | 'tracking' | 'fleet' | 'brokerage' | 'driver';
 
@@ -250,7 +249,7 @@ export type LoadFormData = {
     rateexplantion: string;
     fromLocation: string;
     toLocation: string;
-    paymentTerms: ReturnType<typeof getDefaultPaymentTerms>;
+    paymentTerms: { id: string; name: string }[];
     requirements: string;
     alertMsg: string;
     fuelAvai: string;

@@ -34,7 +34,12 @@ export const storage = getStorage(app)
 // AI is optional and must not initialize while the application bundle is loading.
 // Loading it only when an AI feature is used keeps a Firebase AI failure from
 // preventing the root layout and authentication UI from rendering.
-let modelPromise: Promise<any> | undefined;
+
+/** Vertex AI is not configured for Murimi. Keep legacy callers explicit instead of
+ * silently initializing the unrelated Transix Firebase project. */
+export async function getVertexModel(): Promise<any> {
+  throw new Error('Image AI is not configured for this Murimi project yet.');
+}
 
 
 

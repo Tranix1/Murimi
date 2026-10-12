@@ -1,6 +1,6 @@
 import { addDocument, updateDocument } from '@/db/operations';
 import { useAuth } from '@/context/AuthContext';
-import auth from '@react-native-firebase/auth';
+import { getAuth } from '@react-native-firebase/auth';
 
 export interface AdminAction {
     id?: string;
@@ -36,7 +36,7 @@ export interface AdminActionLog {
  * Get current admin user information
  */
   export const getCurrentAdminInfo = () => {
-    const user = auth().currentUser;
+    const user = getAuth().currentUser;
 
     if (!user) {
         throw new Error("No authenticated user found");

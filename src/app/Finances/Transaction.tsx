@@ -1,0 +1,17 @@
+import React, { useState } from "react";
+import { ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
+import { BatchPage } from "@/app/Batches/_components";
+import { FarmButton, FarmField } from "@/components/farm/FarmComponents";
+import { ThemedText } from "@/components/ThemedText";
+import { useAuth } from "@/context/AuthContext";
+import { useThemeColor } from "@/hooks/useThemeColor";
+import { createFarmRecord } from "@/services/farmRepository";
+import type { FinancialTransaction } from "@/types/farm";
+import { router } from "expo-router";
+export default function CashTransactionScreen() {
+  const { user, activeAccountId } = useAuth(); const [direction, setDirection] = useState<FinancialTransaction["direction"]>("inflow"); const [category, setCategory] = useState("opening_balance"); const [amount, setAmount] = useState(""); const [date, setDate] = useState(new Date().toISOString().slice(0, 10)); const [description, setDescription] = useState("Opening cash balance"); const [saving, setSaving] = useState(false); const [error, setError] = useState("");
+  const accent = useThemeColor("accent"); const surface = useThemeColor("backgroundLight"); const border = useThemeColor("border"); const danger = useThemeColor("bad");
+  const save = async () => { const value = Number(amount); if (!user?.uid || !activeAccountId) { setError("Select an account before recording a transaction."); return; } if (!Number.isFinite(value) || value <= 0 || !date || !description.trim()) { setError("Enter a valid amount, date and description."); return; } setSaving(true); setError(""); try { await createFarmRecord(user.uid, activeAccountId, "transactions", { direction, category: category.trim() || "other", amount: value, date, description: description.trim() }); router.back(); } catch (e) { setError(e instanceof Error ? e.message : "Could not save transaction."); } finally { setSaving(false); } };
+  return <BatchPage title="Cash movement"><ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled"><ThemedText type="tiny">Add an opening cash balance or a receipt/payment not already captured by a sale or expense. Avoid recording a sale or expense again here.</ThemedText><View style={styles.choices}>{(["inflow", "outflow"] as const).map((item) => <TouchableOpacity key={item} onPress={() => { setDirection(item); setCategory(item === "inflow" ? "opening_balance" : "other_payment"); setDescription(item === "inflow" ? "Opening cash balance" : "Cash payment"); }} style={[styles.choice, { backgroundColor: direction === item ? `${accent}18` : surface, borderColor: direction === item ? accent : border }]}><ThemedText type="tiny" color={direction === item ? accent : undefined}>{item === "inflow" ? "Money received" : "Money paid"}</ThemedText></TouchableOpacity>)}</View><FarmField label="Category" value={category} onChangeText={setCategory} /><FarmField label="Amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" /><FarmField label="Date (YYYY-MM-DD)" value={date} onChangeText={setDate} /><FarmField label="Description" value={description} onChangeText={setDescription} multiline />{error ? <ThemedText type="tiny" color={danger}>{error}</ThemedText> : null}<FarmButton label="Save movement" onPress={() => void save()} disabled={saving} /></ScrollView></BatchPage>;
+}
+const styles = StyleSheet.create({ body: { padding: 18, gap: 14, paddingBottom: 32 }, choices: { flexDirection: "row", gap: 9 }, choice: { borderWidth: 1, borderRadius: 13, paddingHorizontal: 14, paddingVertical: 11 } });

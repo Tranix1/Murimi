@@ -15,15 +15,8 @@ export const configureNativeNavigationBar = async (colorScheme: 'light' | 'dark'
 
         // Use Expo's public module API. Expo modules are not guaranteed to be
         // exposed through React Native's NativeModules object in release builds.
-        const NavigationBar = require('expo-navigation-bar');
-
-        if (colorScheme === 'dark') {
-            await NavigationBar.setBackgroundColorAsync('#0f0e11');
-            await NavigationBar.setButtonStyleAsync('light');
-        } else {
-            await NavigationBar.setBackgroundColorAsync('#F9F9F9');
-            await NavigationBar.setButtonStyleAsync('dark');
-        }
+        const { NavigationBar } = require('expo-navigation-bar');
+        NavigationBar.setStyle(colorScheme === 'dark' ? 'dark' : 'light');
         console.log('Native navigation bar configuration completed');
     } catch (error) {
         console.error('Native navigation bar configuration failed:', error);
@@ -47,17 +40,8 @@ export const forceNavigationBarConfig = async (colorScheme: 'light' | 'dark' | n
         for (const delay of attempts) {
             setTimeout(async () => {
                 try {
-                    const NavigationBar = require('expo-navigation-bar');
-
-                    if (colorScheme === 'dark') {
-                        await NavigationBar.setBackgroundColorAsync('#0f0e11');
-                        await NavigationBar.setButtonStyleAsync('light');
-                        console.log(`Force config attempt at ${delay}ms - dark mode`);
-                    } else {
-                        await NavigationBar.setBackgroundColorAsync('#F9F9F9');
-                        await NavigationBar.setButtonStyleAsync('dark');
-                        console.log(`Force config attempt at ${delay}ms - light mode`);
-                    }
+                    const { NavigationBar } = require('expo-navigation-bar');
+                    NavigationBar.setStyle(colorScheme === 'dark' ? 'dark' : 'light');
                 } catch (error) {
                     console.error(`Force config attempt at ${delay}ms failed:`, error);
                 }

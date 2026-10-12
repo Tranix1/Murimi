@@ -1,6 +1,6 @@
 // Global error handler for unhandled promise rejections
 export const setupGlobalErrorHandler = () => {
-    const errorUtils: any = (global as any)?.ErrorUtils;
+    const errorUtils: any = (globalThis as any)?.ErrorUtils;
 
     // If ErrorUtils is unavailable (e.g., some environments), safely no-op
     if (!errorUtils || typeof errorUtils.getGlobalHandler !== 'function' || typeof errorUtils.setGlobalHandler !== 'function') {
@@ -61,7 +61,7 @@ export const safeAsync = async <T>(
 export const safeSetInterval = (
     callback: () => void | Promise<void>,
     delay: number
-): NodeJS.Timeout => {
+): ReturnType<typeof setInterval> => {
     return setInterval(async () => {
         try {
             await callback();
@@ -75,7 +75,7 @@ export const safeSetInterval = (
 export const safeSetTimeout = (
     callback: () => void | Promise<void>,
     delay: number
-): NodeJS.Timeout => {
+): ReturnType<typeof setTimeout> => {
     return setTimeout(async () => {
         try {
             await callback();

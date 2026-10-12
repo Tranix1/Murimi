@@ -193,7 +193,7 @@ export const pickDocument = async (
         continue;
       }
 
-      validFiles.push(selectedFile);
+      validFiles.push({ ...selectedFile, size: selectedFile.size ?? 0 });
       validTypes.push(type);
     }
 
@@ -265,7 +265,7 @@ export const pickDocumentsOnly = async (
         continue;
       }
 
-      validFiles.push(selectedFile);
+      validFiles.push({ ...selectedFile, size: selectedFile.size ?? 0 });
       validTypes.push(type);
     }
 

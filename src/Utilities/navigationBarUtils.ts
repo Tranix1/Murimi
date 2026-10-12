@@ -1,4 +1,4 @@
-import * as NavigationBar from 'expo-navigation-bar';
+import { NavigationBar } from 'expo-navigation-bar';
 import { Platform, StatusBar } from 'react-native';
 
 /**
@@ -13,32 +13,7 @@ export const configureNavigationBar = async (colorScheme: 'light' | 'dark' | nul
     try {
         console.log('Configuring navigation bar for theme:', colorScheme);
 
-        // Use a more aggressive approach - try multiple times with delays
-        const configureWithRetry = async (retries = 3) => {
-            for (let i = 0; i < retries; i++) {
-                try {
-                    if (colorScheme === 'dark') {
-                        await NavigationBar.setBackgroundColorAsync('#0f0e11');
-                        await NavigationBar.setButtonStyleAsync('light');
-                        console.log(`Navigation bar configured for dark mode (attempt ${i + 1})`);
-                    } else {
-                        await NavigationBar.setBackgroundColorAsync('#F9F9F9');
-                        await NavigationBar.setButtonStyleAsync('dark');
-                        console.log(`Navigation bar configured for light mode (attempt ${i + 1})`);
-                    }
-
-                    // Add a small delay between attempts
-                    if (i < retries - 1) {
-                        await new Promise(resolve => setTimeout(resolve, 200));
-                    }
-                } catch (error) {
-                    console.error(`Navigation bar configuration attempt ${i + 1} failed:`, error);
-                    if (i === retries - 1) throw error;
-                }
-            }
-        };
-
-        await configureWithRetry();
+        NavigationBar.setStyle(colorScheme === 'dark' ? 'dark' : 'light');
 
     } catch (error) {
         console.error('Navigation bar configuration failed after all retries:', error);
@@ -77,8 +52,7 @@ export const configureNavigationBarAlternative = async (colorScheme: 'light' | '
 
         if (colorScheme === 'dark') {
             // Try multiple approaches
-            await NavigationBar.setBackgroundColorAsync('#0f0e11');
-            await NavigationBar.setButtonStyleAsync('light');
+            NavigationBar.setStyle('dark');
 
             // Also try setting StatusBar
             StatusBar.setBackgroundColor('#0f0e11', true);
@@ -86,8 +60,7 @@ export const configureNavigationBarAlternative = async (colorScheme: 'light' | '
 
             console.log('Alternative dark mode configuration applied');
         } else {
-            await NavigationBar.setBackgroundColorAsync('#F9F9F9');
-            await NavigationBar.setButtonStyleAsync('dark');
+            NavigationBar.setStyle('light');
 
             // Also try setting StatusBar
             StatusBar.setBackgroundColor('#F9F9F9', true);
@@ -116,12 +89,7 @@ export const debugNavigationBar = async () => {
         console.log('Platform:', Platform.OS);
         console.log('Platform Version:', Platform.Version);
 
-        // Try to get current navigation bar info
-        const currentColor = await NavigationBar.getBackgroundColorAsync();
-        console.log('Current navigation bar background color:', currentColor);
-
-        const currentButtonStyle = await NavigationBar.getButtonStyleAsync();
-        console.log('Current navigation bar button style:', currentButtonStyle);
+        console.log('Navigation bar style API is configured for the current theme.');
 
         console.log('=== End Debug Info ===');
     } catch (error) {

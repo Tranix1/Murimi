@@ -61,7 +61,7 @@ export const safeAsync = async <T>(
 export const safeSetInterval = (
     callback: () => void | Promise<void>,
     delay: number
-): NodeJS.Timeout => {
+): ReturnType<typeof setInterval> => {
     return setInterval(async () => {
         try {
             await callback();
@@ -75,7 +75,7 @@ export const safeSetInterval = (
 export const safeSetTimeout = (
     callback: () => void | Promise<void>,
     delay: number
-): NodeJS.Timeout => {
+): ReturnType<typeof setTimeout> => {
     return setTimeout(async () => {
         try {
             await callback();
