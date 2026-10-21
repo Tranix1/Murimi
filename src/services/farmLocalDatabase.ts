@@ -30,6 +30,7 @@ export type QueuedFarmChange = {
 
 const DATABASE_VERSION = 2;
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
+let transactionTail: Promise<void> = Promise.resolve();
 const observers = new Map<string, Set<() => void>>();
 const syncObservers = new Map<string, Set<() => void>>();
 const observerKey = (uid: string, accountId: string, collection: FarmCollection) => `${uid}:${accountId}:${collection}`;
@@ -124,10 +125,18 @@ export function getFarmDatabase(): Promise<SQLite.SQLiteDatabase> {
 async function inTransaction<T>(work: (database: SQLite.SQLiteDatabase) => Promise<T>): Promise<T> {
   const database = await getFarmDatabase();
   let result: T;
-  if (Platform.OS === "web") {
-    await database.withTransactionAsync(async () => { result = await work(database); });
-  } else {
-    await database.withExclusiveTransactionAsync(async (transaction) => { result = await work(transaction); });
+  let release!: () => void;
+  const previous = transactionTail;
+  transactionTail = new Promise<void>((resolve) => { release = resolve; });
+  await previous;
+  try {
+    if (Platform.OS === "web") {
+      await database.withTransactionAsync(async () => { result = await work(database); });
+    } else {
+      await database.withExclusiveTransactionAsync(async (transaction) => { result = await work(transaction); });
+    }
+  } finally {
+    release();
   }
   return result!;
 }
@@ -290,13 +299,14 @@ export async function getDueFarmChanges(uid: string, accountId: string, force = 
 }
 
 export async function recordFarmSyncFailure(operationIdValue: string, message: string, errorKind: string): Promise<void> {
-  const database = await getFarmDatabase();
-  const row = await database.getFirstAsync<{ attempts: number }>("SELECT attempts FROM farm_sync_queue WHERE operation_id = ?", operationIdValue);
-  if (!row) return;
-  const attempts = row.attempts + 1;
-  const retryDelay = Math.min(60 * 60 * 1000, 5000 * (2 ** Math.min(attempts - 1, 9)));
-  await database.runAsync("UPDATE farm_sync_queue SET attempts=?, next_attempt_at=?, last_error=?, error_kind=? WHERE operation_id=?", attempts, Date.now() + retryDelay, message.slice(0, 300), errorKind, operationIdValue);
-  const rowOwner = await database.getFirstAsync<{ uid: string; account_id: string }>("SELECT uid, account_id FROM farm_sync_queue WHERE operation_id = ?", operationIdValue);
+  const rowOwner = await inTransaction(async (database) => {
+    const row = await database.getFirstAsync<{ attempts: number; uid: string; account_id: string }>("SELECT attempts, uid, account_id FROM farm_sync_queue WHERE operation_id = ?", operationIdValue);
+    if (!row) return null;
+    const attempts = row.attempts + 1;
+    const retryDelay = Math.min(60 * 60 * 1000, 5000 * (2 ** Math.min(attempts - 1, 9)));
+    await database.runAsync("UPDATE farm_sync_queue SET attempts=?, next_attempt_at=?, last_error=?, error_kind=? WHERE operation_id=?", attempts, Date.now() + retryDelay, message.slice(0, 300), errorKind, operationIdValue);
+    return row;
+  });
   if (rowOwner) notifyFarmSyncChanges(rowOwner.uid, rowOwner.account_id);
 }
 
@@ -310,8 +320,8 @@ export async function getFarmSyncSummary(uid: string, accountId: string) {
 }
 
 export async function setFarmLastSyncedAt(uid: string, accountId: string): Promise<void> {
-  const database = await getFarmDatabase(); const now = new Date().toISOString();
-  await database.runAsync("INSERT INTO farm_sync_metadata (uid, account_id, last_synced_at) VALUES (?, ?, ?) ON CONFLICT(uid, account_id) DO UPDATE SET last_synced_at=excluded.last_synced_at", uid, accountId, now);
+  const now = new Date().toISOString();
+  await inTransaction((database) => database.runAsync("INSERT INTO farm_sync_metadata (uid, account_id, last_synced_at) VALUES (?, ?, ?) ON CONFLICT(uid, account_id) DO UPDATE SET last_synced_at=excluded.last_synced_at", uid, accountId, now).then(() => undefined));
   notifyFarmSyncChanges(uid, accountId);
 }
 

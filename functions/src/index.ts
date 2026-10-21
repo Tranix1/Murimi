@@ -58,3 +58,39 @@ export const deleteMurimiFarmAccount = onCall({ region: "us-central1" }, async (
     throw new HttpsError("internal", "Farm account deletion failed. Its local data has been kept.");
   }
 });
+
+/** Creates a private server-side audit entry for a generated export trace code. */
+export const recordMurimiExportTrace = onCall({ region: "us-central1" }, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Sign in to register this export trace.");
+
+  const { accountId, traceCode, format, totalRecords, categories } = request.data ?? {};
+  if (typeof accountId !== "string" || !/^(?:[1-9][0-9]*|acc[1-9][0-9]*)$/.test(accountId)
+    || typeof traceCode !== "string" || !/^MRM-[A-Z0-9]+-[A-Z0-9]{6}$/.test(traceCode)
+    || !["xlsx", "zip"].includes(format)
+    || !Number.isInteger(totalRecords) || totalRecords < 1
+    || !Array.isArray(categories) || categories.length > 24 || categories.some((category: unknown) => typeof category !== "string" || category.length > 48)) {
+    throw new HttpsError("invalid-argument", "The export trace details are invalid.");
+  }
+
+  const projectId = process.env.GCLOUD_PROJECT ?? process.env.GCP_PROJECT;
+  if (projectId !== REQUIRED_PROJECT_ID) {
+    throw new HttpsError("failed-precondition", `Export tracing is configured for ${REQUIRED_PROJECT_ID}, not ${projectId ?? "an unknown project"}.`);
+  }
+
+  try {
+    await getFirestore().doc(`users/${uid}/farmAccounts/${accountId}/exportAudits/${traceCode}`).create({
+      ownerId: uid,
+      accountId,
+      traceCode,
+      format,
+      totalRecords,
+      categories,
+      createdAt: new Date().toISOString(),
+    });
+    return { recorded: true };
+  } catch (error) {
+    console.error("Murimi export trace registration failed", { uid, accountId, traceCode, error });
+    throw new HttpsError("internal", "The export was created, but its trace could not be registered.");
+  }
+});

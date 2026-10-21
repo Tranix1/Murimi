@@ -143,14 +143,8 @@ export function AuthProvider({
         const parsedNumber = Number(account.number ?? String(account.id ?? "").match(/\d+/)?.[0] ?? String(account.name ?? "").match(/\d+/)?.[0]);
         return { ...account, id: String(account.id ?? index + 1), number: Number.isInteger(parsedNumber) && parsedNumber > 0 ? parsedNumber : index + 1, name: typeof account.name === "string" && account.name.trim() ? account.name.trim() : `Account ${index + 1}` };
       });
-      try {
-        const cloudAccounts = await getFarmAccountMetadata(firebaseUser.uid);
-        if (cloudAccounts.length) nextAccounts = cloudAccounts as SavedAccount[];
-      } catch (error) {
-        console.warn("Could not restore Murimi farm account names from cloud; using the saved device copy.", error);
-      }
       let storedRoleValue: CurrentRole | null = storedRole ? JSON.parse(storedRole) : null;
-      if (!nextAccounts.length && (storedRoleValue || accountType)) {
+      if (!nextAccounts.length) {
         const firstRole = storedRoleValue ?? defaultRole(accountType);
         nextAccounts = [{ id: "1", number: 1, name: "Account 1", currentRole: firstRole }];
         await AsyncStorage.setItem(accountsStorageKey(firebaseUser.uid), JSON.stringify(nextAccounts));
@@ -165,7 +159,29 @@ export function AuthProvider({
       setAccounts(nextAccounts);
       setCurrentRole(nextRole);
       setActiveAccountId(selectedAccount?.id ?? (nextAccounts[0]?.id ?? null));
-      await Promise.all(nextAccounts.map((account) => saveFarmAccountMetadata(firebaseUser.uid, account).catch((error) => console.warn(`Could not sync farm account ${account.number} metadata.`, error))));
+      // Local account state is enough to open the app offline. Cloud metadata is
+      // restored in the background so a fresh install can discover its accounts.
+      setIsLoading(false);
+      void (async () => {
+        try {
+          const cloudAccounts = await getFarmAccountMetadata(firebaseUser.uid);
+          if (cloudAccounts.length) {
+            const restoredAccounts = cloudAccounts as SavedAccount[];
+            const active = restoredAccounts.find((item) => item.id === storedActiveId) ?? restoredAccounts[0];
+            if (!active || getAuth().currentUser?.uid !== firebaseUser.uid) return;
+            await AsyncStorage.setItem(accountsStorageKey(firebaseUser.uid), JSON.stringify(restoredAccounts));
+            await AsyncStorage.setItem(activeAccountStorageKey(firebaseUser.uid), active.id);
+            await AsyncStorage.setItem(currentRoleStorageKey(firebaseUser.uid), JSON.stringify(active.currentRole));
+            setAccounts(restoredAccounts);
+            setCurrentRole(active.currentRole);
+            setActiveAccountId(active.id);
+          } else {
+            await Promise.all(nextAccounts.map((account) => saveFarmAccountMetadata(firebaseUser.uid, account).catch((error) => console.warn(`Could not sync farm account ${account.number} metadata yet.`, error))));
+          }
+        } catch (error) {
+          console.warn("Could not restore Murimi farm accounts from cloud; using this device's saved copy.", error);
+        }
+      })();
     } catch (error) {
       console.error("Failed to restore saved accounts:", error);
     }

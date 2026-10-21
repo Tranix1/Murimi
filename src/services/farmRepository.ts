@@ -537,6 +537,7 @@ async function syncQueuedChange(change: QueuedFarmChange): Promise<Record<string
 export type FarmSyncResult = { success: true; pendingCount: 0 } | { success: false; pendingCount: number; error: string };
 const FARM_FIREBASE_PROJECT_ID = "murimi-9a3e7";
 const activeSyncs = new Map<string, Promise<FarmSyncResult>>();
+const activeRefreshes = new Map<string, Promise<void>>();
 const deletingMurimiUsers = new Set<string>();
 const deletingMurimiFarmAccounts = new Set<string>();
 function verifyFarmFirebaseProject(): string | null {
@@ -616,6 +617,18 @@ export async function requestMurimiAccountDeletion(uid: string, idToken: string)
   }
 }
 
+/** Registers an export trace against the authenticated user without exposing their UID in the file. */
+export async function recordMurimiExportTrace(accountId: string, idToken: string, trace: { traceCode: string; format: "xlsx" | "zip"; totalRecords: number; categories: string[] }): Promise<void> {
+  if (getApp().options.projectId !== FARM_FIREBASE_PROJECT_ID) throw new Error(`Export tracing is available only from Firebase project ${FARM_FIREBASE_PROJECT_ID}.`);
+  const response = await fetch(`https://us-central1-${FARM_FIREBASE_PROJECT_ID}.cloudfunctions.net/recordMurimiExportTrace`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ data: { accountId, ...trace } }),
+  });
+  const payload = await response.json().catch(() => null) as { result?: { recorded?: boolean }; error?: { message?: string } } | null;
+  if (!response.ok || payload?.result?.recorded !== true) throw new Error(payload?.error?.message ?? `Export trace registration failed (${response.status}).`);
+}
+
 /** Deletes only one Murimi farm account in the cloud and purges its local rows after confirmation. */
 export async function deleteMurimiFarmAccount(uid: string, accountId: string, idToken: string): Promise<void> {
   if (getApp().options.projectId !== FARM_FIREBASE_PROJECT_ID) throw new Error(`Farm account deletion is available only from Firebase project ${FARM_FIREBASE_PROJECT_ID}.`);
@@ -650,14 +663,23 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   });
 }
 
-export async function refreshFarmAccountFromCloud(uid: string, accountId: string): Promise<void> {
-  const projectError = verifyFarmFirebaseProject();
-  if (projectError) throw new Error(projectError);
-  await Promise.all(FARM_COLLECTIONS.map(async (collectionName) => {
-    const snapshot = await getDocsFromServer(query(farmCollection(uid, accountId, collectionName)));
-    await saveRemoteFarmRecords(uid, accountId, collectionName, snapshot.docs.map(recordFromSnapshot), true);
-  }));
-  await setFarmLastSyncedAt(uid, accountId);
+export function refreshFarmAccountFromCloud(uid: string, accountId: string): Promise<void> {
+  const key = `${uid}:${accountId}`;
+  const current = activeRefreshes.get(key);
+  if (current) return current;
+  const work = (async () => {
+    const projectError = verifyFarmFirebaseProject();
+    if (projectError) throw new Error(projectError);
+    // Keep SQLite writes ordered. Running all collection downloads at once can
+    // make snapshot listeners contend for the same local database.
+    for (const collectionName of FARM_COLLECTIONS) {
+      const snapshot = await getDocsFromServer(query(farmCollection(uid, accountId, collectionName)));
+      await saveRemoteFarmRecords(uid, accountId, collectionName, snapshot.docs.map(recordFromSnapshot), true);
+    }
+    await setFarmLastSyncedAt(uid, accountId);
+  })().finally(() => { activeRefreshes.delete(key); });
+  activeRefreshes.set(key, work);
+  return work;
 }
 
 export async function getFarmAccountMetadata(uid: string): Promise<Array<{ id: string; number: number; name: string; currentRole: Record<string, unknown> }>> {

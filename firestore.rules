@@ -1,13 +1,31 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Account names, numeric IDs, and role settings are private to their owner.
+    function owns(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    function farmCollection(collectionName) {
+      return collectionName in [
+        'batches', 'dailyRecords', 'mortalityRecords', 'batchProblems', 'weights',
+        'expenses', 'purchases', 'sales', 'slaughter', 'assets', 'plans',
+        'transactions', 'stock', 'stockMovements', 'payments', 'treatments',
+        'customerCategories', 'customers', 'paymentMethods', 'purchaseCategories',
+        'purchaseMeasures', 'suppliers'
+      ];
+    }
+
+    function hasFarmScope(userId, accountId) {
+      return request.resource.data.ownerId == userId
+        && request.resource.data.accountId == accountId;
+    }
+
+    // Account metadata is stored at this path and is needed to restore account
+    // names and IDs on a different device.
     match /users/{userId}/farmAccounts/{accountId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
-      allow create: if request.auth != null
-        && request.auth.uid == userId
-        && request.resource.data.ownerId == userId
-        && request.resource.data.accountId == accountId
+      allow read: if owns(userId);
+      allow create: if owns(userId)
+        && hasFarmScope(userId, accountId)
         && request.resource.data.number is int
         && request.resource.data.number >= 1
         && request.resource.data.number <= 10
@@ -15,38 +33,39 @@ service cloud.firestore {
         && request.resource.data.name.size() > 0
         && request.resource.data.name.size() <= 40
         && request.resource.data.currentRole is map;
-      allow update: if request.auth != null
-        && request.auth.uid == userId
+      allow update: if owns(userId)
         && resource.data.ownerId == userId
         && resource.data.accountId == accountId
-        && request.resource.data.ownerId == userId
-        && request.resource.data.accountId == accountId
+        && hasFarmScope(userId, accountId)
         && request.resource.data.number == resource.data.number
         && request.resource.data.name is string
         && request.resource.data.name.size() > 0
         && request.resource.data.name.size() <= 40
         && request.resource.data.currentRole is map;
-      // Account documents are removed through the authenticated server function.
+      // Account removal is handled by the authenticated deletion function.
       allow delete: if false;
     }
 
-    // Farm records are scoped to the authenticated owner's account path.
-    match /users/{userId}/farmAccounts/{accountId}/{document=**} {
-      allow read: if request.auth != null && request.auth.uid == userId;
-      allow create: if request.auth != null
-        && request.auth.uid == userId
-        && request.resource.data.ownerId == userId
-        && request.resource.data.accountId == accountId;
-      allow update: if request.auth != null
-        && request.auth.uid == userId
+    // Farm records use /users/{uid}/farmAccounts/{accountId}/{collection}/{id}.
+    match /users/{userId}/farmAccounts/{accountId}/{collectionName}/{recordId} {
+      allow read: if owns(userId) && farmCollection(collectionName);
+      allow create: if owns(userId)
+        && farmCollection(collectionName)
+        && hasFarmScope(userId, accountId);
+      allow update: if owns(userId)
+        && farmCollection(collectionName)
         && resource.data.ownerId == userId
         && resource.data.accountId == accountId
-        && request.resource.data.ownerId == userId
-        && request.resource.data.accountId == accountId;
-      allow delete: if request.auth != null
-        && request.auth.uid == userId
+        && hasFarmScope(userId, accountId);
+      allow delete: if owns(userId)
+        && farmCollection(collectionName)
         && resource.data.ownerId == userId
         && resource.data.accountId == accountId;
+    }
+
+    // No other paths or nested collections are client-accessible.
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

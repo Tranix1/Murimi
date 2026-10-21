@@ -42,12 +42,12 @@ test("transaction category, payment method, and date filters are applied", () =>
 
 test("CSV preserves numeric cells, quotes nested data, and neutralizes formulas", () => {
     const csv = recordsToCsv([{ id: "x1", amount: 12.5, name: "=HYPERLINK(1)", notes: "a, \"b\"", details: { batchId: "b1" } }]);
-    assert.match(csv, /^\uFEFFid,/);
+    assert.match(csv, /^\uFEFFRecord ID,/);
     assert.match(csv, /12\.5/);
     assert.match(csv, /'=HYPERLINK\(1\)/);
     assert.match(csv, /"a, ""b"""/);
-    assert.match(csv, /details\.batchId/);
-    assert.match(recordsToCsv([]), /id,ownerId,accountId,createdAt,updatedAt/);
+    assert.match(csv, /Details › Batch ID/);
+    assert.match(recordsToCsv([]), /Record ID,Created At,Updated At/);
 });
 
 test("financial summary separates cash, revenue, expenses, and inventory purchases", () => {
@@ -83,7 +83,7 @@ test("single-category and empty data exports have explicit counts and headers", 
     assert.ok(output.files.some((file) => file.fileName === "sales_and_revenue.csv" && file.content.includes("sale1")));
     const empty = buildCategoryCsvFiles({}, {}, new Set(["mortalityRecords"]), ["sales", "mortalityRecords"], labels, {});
     assert.equal(empty.counts.mortalityRecords, 0);
-    assert.ok(empty.files.find((file) => file.fileName === "mortality_records_and_causes.csv")?.content.includes("id,ownerId"));
+    assert.ok(empty.files.find((file) => file.fileName === "mortality_records_and_causes.csv")?.content.includes("Record ID,Created At,Updated At"));
 });
 
 test("export includes closed and historical records without requiring active status", () => {
@@ -116,11 +116,13 @@ test("XLSX export creates separate sheets with numeric amounts and usable date c
     const workbook = XLSX.read(bytes, { type: "buffer", cellNF: true });
     assert.deepEqual(workbook.SheetNames, ["Sales and revenue", "Export metadata"]);
     const sales = workbook.Sheets["Sales and revenue"];
-    assert.equal(sales.B2.v, 46082);
-    assert.equal(sales.B2.t, "n");
-    assert.equal(sales.C2.v, 25.5);
-    assert.equal(sales.C2.t, "n");
-    assert.equal(sales.B2.z, "yyyy-mm-dd");
-    assert.equal(workbook.Sheets["Export metadata"].B2.t, "n");
-    assert.equal(workbook.Sheets["Export metadata"].B2.z, "yyyy-mm-dd hh:mm");
+    assert.match(sales.A1.v, /MURIMI FARM RECORDS/);
+    assert.match(sales.A2.v, /Trace code: MRM-UNASSIGNED/);
+    assert.equal(sales.B5.v, 46082);
+    assert.equal(sales.B5.t, "n");
+    assert.equal(sales.C5.v, 25.5);
+    assert.equal(sales.C5.t, "n");
+    assert.equal(sales.B5.z, "yyyy-mm-dd");
+    assert.equal(workbook.Sheets["Export metadata"].B5.t, "n");
+    assert.equal(workbook.Sheets["Export metadata"].B5.z, "yyyy-mm-dd hh:mm");
 });

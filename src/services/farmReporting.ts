@@ -3,7 +3,7 @@ import { calculateInventoryBalances } from "@/Utilities/inventoryCalculations";
 import { getLocalFarmRecords } from "@/services/farmLocalDatabase";
 import { FARM_COLLECTIONS, type FarmCollection } from "@/services/farmRepository";
 import { buildCategoryCsvFiles, filterReportRecords, flattenReportRecord, getReportRecordDate, recordsToCsv, type ReportFilters } from "@/services/reportingUtils";
-import { createXlsxWorkbook, type SpreadsheetSheetData } from "@/services/spreadsheetExport";
+import { createXlsxWorkbook, type SpreadsheetBranding, type SpreadsheetSheetData } from "@/services/spreadsheetExport";
 import type { Batch, DailyRecord, Expense, FarmAsset, FinancialTransaction, InventoryItem, MortalityRecord, Purchase, Sale, SlaughterRecord, StockMovement, WeightMeasurement } from "@/types/farm";
 import JSZip from "jszip";
 
@@ -202,7 +202,16 @@ export type FarmExportResult = {
     counts: Partial<Record<FarmCollection, number>>;
     failures: Partial<Record<FarmCollection, string>>;
     totalRecords: number;
+    branding: SpreadsheetBranding;
 };
+
+export type FarmExportSyncStatus = { status: string; pendingCount: number; error?: string };
+
+export function createFarmExportTraceCode(): string {
+    const time = Date.now().toString(36).toUpperCase();
+    const random = Math.random().toString(36).slice(2, 8).toUpperCase().padEnd(6, "0");
+    return `MRM-${time}-${random}`;
+}
 
 export function buildFarmExportFiles(
     data: FarmReportDataset,
@@ -210,14 +219,21 @@ export function buildFarmExportFiles(
     selectedCollections: ReadonlySet<FarmCollection>,
     filters: ReportFilters,
     accountName: string,
+    syncStatus: FarmExportSyncStatus = { status: "Saved device records", pendingCount: 0 },
 ): FarmExportResult {
     const relatedBatchRecordIds = relatedRecordIds(data, filters.batchId);
     const contextualFilters = { ...filters, relatedBatchRecordIds };
     const categoryFiles = buildCategoryCsvFiles(data, loadFailures, selectedCollections, FARM_COLLECTIONS, REPORT_CATEGORY_LABELS, contextualFilters);
     const { categories: collections, counts, failures, files } = categoryFiles;
     const analytics = calculateFarmReportAnalytics(data, filters);
+    const branding: SpreadsheetBranding = { traceCode: createFarmExportTraceCode(), accountName, exportedAt: new Date().toISOString() };
     const metadata = [
-        { field: "Exported at (UTC)", value: new Date().toISOString() },
+        { field: "Exported at (UTC)", value: branding.exportedAt },
+        { field: "Trace code", value: branding.traceCode },
+        { field: "Data source", value: "Murimi farm records for the authenticated account" },
+        { field: "Sync status", value: syncStatus.status },
+        { field: "Pending sync changes", value: syncStatus.pendingCount },
+        ...(syncStatus.error ? [{ field: "Sync detail", value: syncStatus.error }] : []),
         { field: "Farm account", value: accountName },
         { field: "Start date", value: filters.fromDate ?? "All dates" },
         { field: "End date", value: filters.toDate ?? "All dates" },
@@ -245,7 +261,7 @@ export function buildFarmExportFiles(
         rows: filterReportRecords(collection, data[collection] ?? [], contextualFilters).map((record) => flattenReportRecord(record)),
     }));
     sheets.push({ name: "Export metadata", rows: metadata.map((record) => flattenReportRecord(record)) }, { name: "Financial summary", rows: financialSummary.map((record) => flattenReportRecord(record)) });
-    return { files, sheets, counts, failures, totalRecords: categoryFiles.totalRecords };
+    return { files, sheets, counts, failures, totalRecords: categoryFiles.totalRecords, branding };
 }
 
 export async function createFarmExportZip(result: FarmExportResult): Promise<Uint8Array> {
@@ -259,5 +275,5 @@ export function reportDateForRecord(collection: FarmCollection, record: Record<s
 }
 
 export function createFarmExportWorkbook(result: FarmExportResult): Uint8Array {
-    return createXlsxWorkbook(result.sheets);
+    return createXlsxWorkbook(result.sheets, result.branding);
 }

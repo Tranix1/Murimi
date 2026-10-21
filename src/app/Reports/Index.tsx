@@ -4,8 +4,12 @@ import ScreenWrapper from "@/components/ScreenWrapper";
 import { ThemedText } from "@/components/ThemedText";
 import { useAuth } from "@/context/AuthContext";
 import { useThemeColor } from "@/hooks/useThemeColor";
-import { calculateFarmReportAnalytics, createFarmExportWorkbook, createFarmExportZip, filterFarmReportDataset, FINANCIAL_COLLECTIONS, loadFarmReportDataset, REPORT_CATEGORY_LABELS, reportDateForRecord, type ReportLoadResult } from "@/services/farmReporting";
-import { FARM_COLLECTIONS, type FarmCollection } from "@/services/farmRepository";
+import { buildFarmExportFiles, calculateFarmReportAnalytics, createFarmExportWorkbook, createFarmExportZip, filterFarmReportDataset, FINANCIAL_COLLECTIONS, loadFarmReportDataset, REPORT_CATEGORY_LABELS, reportDateForRecord, type ReportLoadResult } from "@/services/farmReporting";
+import { FARM_COLLECTIONS, recordMurimiExportTrace, refreshFarmAccountFromCloud, syncFarmAccount, type FarmCollection } from "@/services/farmRepository";
+import { recordsToCsv } from "@/services/reportingUtils";
+import { getFarmSyncSummary } from "@/services/farmLocalDatabase";
+import NetInfo from "@react-native-community/netinfo";
+import { getAuth, getIdToken } from "@react-native-firebase/auth";
 import { Ionicons } from "@expo/vector-icons";
 import { File, Paths } from "expo-file-system";
 import { useEffect, useState } from "react";
@@ -73,23 +77,79 @@ export default function ReportsScreen() {
         if (!user?.uid || !activeAccountId) { Alert.alert("Account unavailable", "Select a farm account before exporting."); return; }
         setExporting(true);
         try {
+            let syncStatus = { status: "Saved device records", pendingCount: 0, error: undefined as string | undefined };
+            try {
+                const beforeSync = await getFarmSyncSummary(user.uid, activeAccountId);
+                syncStatus.pendingCount = beforeSync.pendingCount;
+                const network = await NetInfo.fetch();
+                if (network.isConnected && network.isInternetReachable !== false) {
+                    const syncResult = await syncFarmAccount(user.uid, activeAccountId, true);
+                    syncStatus.pendingCount = syncResult.pendingCount;
+                    if (syncResult.success) {
+                        try {
+                            await refreshFarmAccountFromCloud(user.uid, activeAccountId);
+                            syncStatus.status = "Synced with Murimi cloud before export";
+                            syncStatus.pendingCount = 0;
+                        } catch (error) {
+                            syncStatus.status = "Exported saved records; cloud refresh failed";
+                            syncStatus.error = error instanceof Error ? error.message : "Could not refresh farm records from the cloud.";
+                        }
+                    } else {
+                        syncStatus.status = "Exported saved records; some changes are not synced";
+                        syncStatus.error = syncResult.error;
+                    }
+                } else {
+                    syncStatus.status = "Offline; exported saved device records";
+                    syncStatus.error = beforeSync.lastError ?? undefined;
+                }
+            } catch (error) {
+                syncStatus.status = "Exported saved records; sync status unavailable";
+                syncStatus.error = error instanceof Error ? error.message : "Could not check cloud sync status.";
+            }
             const fresh = await loadFarmReportDataset(user.uid, activeAccountId);
             setLoaded(fresh);
-            const { buildFarmExportFiles } = await import("@/services/farmReporting");
-            const result = buildFarmExportFiles(fresh.data, fresh.failures, selectedCategories, filters, activeAccountName ?? "Selected farm account");
+            const result = buildFarmExportFiles(fresh.data, fresh.failures, selectedCategories, filters, activeAccountName ?? "Selected farm account", syncStatus);
+            if (result.totalRecords === 0) {
+                const selectedFailures = Object.entries(result.failures).filter(([collection]) => selectedCategories.has(collection as FarmCollection));
+                if (selectedFailures.length) throw new Error(`No selected records could be exported. ${selectedFailures.map(([collection, message]) => `${REPORT_CATEGORY_LABELS[collection as FarmCollection]}: ${message}`).join("; ")}`);
+                Alert.alert("No records to export", "No records match the selected categories and filters. Clear the date, batch, or category filters and try again.");
+                return;
+            }
+            let traceStatus = "Not registered with Murimi cloud";
+            try {
+                const currentUser = getAuth().currentUser;
+                if (!currentUser || currentUser.uid !== user.uid) throw new Error("The signed-in Murimi account could not be verified.");
+                const token = await getIdToken(currentUser, true);
+                await recordMurimiExportTrace(activeAccountId, token, {
+                    traceCode: result.branding.traceCode,
+                    format: exportFormat === "xlsx" ? "xlsx" : "zip",
+                    totalRecords: result.totalRecords,
+                    categories: Object.entries(result.counts).filter(([, count]) => (count ?? 0) > 0).map(([collection]) => collection),
+                });
+                traceStatus = "Registered to this signed-in Murimi account";
+            } catch (error) {
+                traceStatus = error instanceof Error ? `Not registered: ${error.message}` : "Not registered: cloud trace service unavailable.";
+            }
+            const metadataSheet = result.sheets.find((sheet) => sheet.name === "Export metadata");
+            if (metadataSheet) {
+                metadataSheet.rows.push({ field: "Trace registration", value: traceStatus });
+                const metadataFile = result.files.find((file) => file.fileName === "export_metadata.csv");
+                if (metadataFile) metadataFile.content = recordsToCsv(metadataSheet.rows);
+            }
             const archiveBytes = exportFormat === "xlsx" ? createFarmExportWorkbook(result) : await createFarmExportZip(result);
             const extension = exportFormat === "xlsx" ? "xlsx" : "zip";
-            const fileName = `murimi_reports_${new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-")}.${extension}`;
+            const fileName = `murimi_export_${result.branding.traceCode}_${new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-")}.${extension}`;
             const file = new File(Paths.cache, fileName);
             file.create({ intermediates: true, overwrite: true });
             file.write(archiveBytes);
+            if (file.size !== archiveBytes.byteLength) throw new Error(`The export file is incomplete (${file.size} of ${archiveBytes.byteLength} bytes).`);
             const Sharing = await import("expo-sharing");
             if (!(await Sharing.isAvailableAsync())) throw new Error("File sharing is unavailable on this platform. Open Reports & Export on an Android or iOS device to share the ZIP file.");
             const mimeType = exportFormat === "xlsx" ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "application/zip";
             await Sharing.shareAsync(file.uri, { mimeType, dialogTitle: "Share Murimi reports" });
             const countLines = Object.entries(result.counts).map(([collection, count]) => `${REPORT_CATEGORY_LABELS[collection as FarmCollection]}: ${count}`).join("\n");
             const failureLines = Object.entries(result.failures).map(([collection, message]) => `${REPORT_CATEGORY_LABELS[collection as FarmCollection]}: ${message}`).join("\n");
-            Alert.alert("Export summary", `${result.totalRecords} records exported.\n\n${countLines || "No category records were available."}${failureLines ? `\n\nFailed categories:\n${failureLines}` : ""}`);
+            Alert.alert("Export ready", `${result.totalRecords} records exported.\nTrace code: ${result.branding.traceCode}\n${traceStatus}\n${syncStatus.status}${syncStatus.pendingCount ? ` (${syncStatus.pendingCount} pending)` : ""}${syncStatus.error ? `\n${syncStatus.error}` : ""}\n\n${countLines}${failureLines ? `\n\nFailed categories:\n${failureLines}` : ""}`);
         } catch (error) {
             Alert.alert("Export failed", error instanceof Error ? error.message : "The report could not be created or shared.");
         } finally { setExporting(false); }

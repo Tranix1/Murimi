@@ -9,6 +9,19 @@ export type ReportFilters = {
     relatedBatchRecordIds?: ReadonlySet<string>;
 };
 
+const privateExportFields = new Set(["ownerId", "uid", "userId", "accountId", "idToken", "refreshToken"]);
+
+export function reportColumnLabel(column: string): string {
+    if (column === "id") return "Record ID";
+    return column.split(".").map((part) => part
+        .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+        .replaceAll("_", " ")
+        .replace(/\bId\b/gi, "ID")
+        .replace(/\s+/g, " ")
+        .replace(/^./, (first) => first.toLocaleUpperCase())
+    ).join(" › ");
+}
+
 const batchScopedCollections = new Set([
     "batches", "dailyRecords", "mortalityRecords", "batchProblems", "weights", "expenses",
     "purchases", "sales", "slaughter", "stockMovements", "payments", "transactions",
@@ -65,6 +78,7 @@ export function filterReportRecords<T extends Record<string, unknown>>(
 
 export function flattenReportRecord(record: Record<string, unknown>, prefix = "", output: Record<string, string | number | boolean> = {}): Record<string, string | number | boolean> {
     for (const [key, value] of Object.entries(record)) {
+        if (privateExportFields.has(key)) continue;
         const column = prefix ? `${prefix}.${key}` : key;
         if (value == null) continue;
         if (Array.isArray(value)) {
@@ -92,8 +106,8 @@ export function recordsToCsv(records: Record<string, unknown>[]): string {
         if (b === "id") return 1;
         return a.localeCompare(b);
     });
-    if (!columns.length) columns.push("id", "ownerId", "accountId", "createdAt", "updatedAt");
-    const lines = [columns.map(csvCell).join(","), ...rows.map((row) => columns.map((column) => row[column] === undefined ? "" : csvCell(row[column])).join(","))];
+    if (!columns.length) columns.push("id", "createdAt", "updatedAt");
+    const lines = [columns.map((column) => csvCell(reportColumnLabel(column))).join(","), ...rows.map((row) => columns.map((column) => row[column] === undefined ? "" : csvCell(row[column])).join(","))];
     return `\uFEFF${lines.join("\r\n")}`;
 }
 
