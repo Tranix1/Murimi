@@ -41,3 +41,7 @@ example
 # generated native folders
 /ios
 /android
+
+# Firebase Cloud Functions build output and dependencies
+/functions/lib/
+/functions/node_modules/

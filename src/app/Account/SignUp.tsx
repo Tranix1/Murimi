@@ -23,8 +23,6 @@ import { Image } from 'expo-image';
 import { useAuth } from '@/context/AuthContext';
 import { AccountType } from '@/types/types';
 import { router } from 'expo-router';
-import { firebaseConfig } from '@/db/fireBaseConfig';
-
 import PhoneInput from '@/components/PhoneInput';
 import { validateReferralCode } from '@/db/operations';
 import { trackEventFirebase, trackScreen } from '@/services/analytics/firebaseAnalystics';

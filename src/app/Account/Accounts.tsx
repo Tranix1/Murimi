@@ -1,5 +1,6 @@
 import React from "react";
-import { Alert, StyleSheet, TouchableOpacity, View } from "react-native";
+import { Alert, StyleSheet, TextInput, TouchableOpacity, View } from "react-native";
+import { useState } from "react";
 import { router } from "expo-router";
 import ScreenWrapper from "@/components/ScreenWrapper";
 import { ThemedText } from "@/components/ThemedText";
@@ -7,14 +8,17 @@ import { useThemeColor } from "@/hooks/useThemeColor";
 import { useAuth } from "@/context/AuthContext";
 
 export default function AccountsScreen() {
-  const { user, accounts, currentRole, createAccount, switchAccount } = useAuth();
+  const { user, accounts, activeAccountId, currentRole, createAccount, switchAccount } = useAuth();
   const accent = useThemeColor("accent");
   const background = useThemeColor("backgroundLight");
+  const muted = useThemeColor("textlight");
+  const textColor = useThemeColor("text");
+  const [accountName, setAccountName] = useState("");
 
   const handleCreate = async () => {
-    const account = await createAccount();
+    const account = await createAccount(accountName);
     if (!account) {
-      Alert.alert("Accounts", user ? "You already have acc 1 and acc 2." : "Sign in before creating an account.");
+      Alert.alert("Accounts", user ? "Enter a unique account name. You can create up to 10 farm accounts." : "Sign in before creating an account.");
       return;
     }
     router.replace("/");
@@ -38,13 +42,17 @@ export default function AccountsScreen() {
             onPress={() => void handleSwitch(account.id)}
             style={[styles.account, { backgroundColor: background, borderColor: accent }]}
           >
-            <ThemedText type="subtitle">{account.name}{account.currentRole === currentRole ? " (current)" : ""}</ThemedText>
+            <ThemedText type="subtitle">{account.name}{account.id === activeAccountId ? " (current)" : ""}</ThemedText>
+            <ThemedText type="tiny" color={muted}>Account ID: {account.number}</ThemedText>
             <ThemedText>{account.currentRole.accType}</ThemedText>
           </TouchableOpacity>
         ))}
-        {accounts.length < 2 && (
+        {accounts.length < 10 && (
+          <TextInput value={accountName} onChangeText={setAccountName} maxLength={40} placeholder="New account name" placeholderTextColor={muted} style={[styles.nameInput, { borderColor: accent, color: textColor }]} />
+        )}
+        {accounts.length < 10 && (
           <TouchableOpacity onPress={() => void handleCreate()} style={[styles.create, { backgroundColor: accent }]}>
-            <ThemedText style={styles.createLabel}>Create {accounts.length === 0 ? "acc 1" : "acc 2"}</ThemedText>
+            <ThemedText style={styles.createLabel}>Add account</ThemedText>
           </TouchableOpacity>
         )}
       </View>
@@ -58,4 +66,5 @@ const styles = StyleSheet.create({
   account: { borderWidth: 1, borderRadius: 12, padding: 16, gap: 4 },
   create: { borderRadius: 12, padding: 16, alignItems: "center" },
   createLabel: { color: "white", fontWeight: "700" },
+  nameInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, minHeight: 46 },
 });

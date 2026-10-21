@@ -21,14 +21,14 @@ export function FarmSyncProvider({ children }: { children: ReactNode }) {
 
   const connected = network?.isConnected === true && network.isInternetReachable !== false;
   const loadSummary = useCallback(async () => {
-    if (!user?.uid || !activeAccountId) { setPendingCount(0); setFailedCount(0); setLastSyncedAt(null); return; }
+    if (!user?.uid || !activeAccountId) { setPendingCount(0); setFailedCount(0); setLastSyncedAt(null); setError(null); return; }
     try {
       const summary = await getFarmSyncSummary(user.uid, activeAccountId);
       setPendingCount(summary.pendingCount); setFailedCount(summary.failedCount); setLastSyncedAt(summary.lastSyncedAt);
-      if (summary.pendingCount === 0 && connected) setState("synced");
-      else if (!connected && summary.pendingCount > 0) setState("saved_offline");
+      if (summary.pendingCount === 0 && connected) { setState("synced"); setError(null); }
+      else if (!connected && summary.pendingCount > 0) { setState("saved_offline"); setError(summary.lastError); }
       else if (!connected) setState("offline");
-      else if (summary.failedCount > 0) setState("failed");
+      else if (summary.failedCount > 0) { setState("failed"); setError(summary.lastError); }
       else if (summary.pendingCount > 0 && state !== "syncing") setState("pending");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not read sync status."); }
   }, [user?.uid, activeAccountId, connected, state]);
@@ -37,17 +37,22 @@ export function FarmSyncProvider({ children }: { children: ReactNode }) {
     if (!user?.uid || !activeAccountId || !connected) return;
     setState("syncing"); setError(null);
     try {
-      await syncFarmAccount(user.uid, activeAccountId, force, (next, message) => {
+      const result = await syncFarmAccount(user.uid, activeAccountId, force, (next, message) => {
         if (next === "failed") { setState("failed"); setError(message ?? "Synchronization failed."); }
         else if (next === "syncing") setState("syncing");
         else setError(null);
       });
-      if (failedCount === 0) await refreshFarmAccountFromCloud(user.uid, activeAccountId);
+      if (!result.success) {
+        await loadSummary();
+        setState("failed"); setError(result.error); setPendingCount(result.pendingCount);
+        return;
+      }
+      await refreshFarmAccountFromCloud(user.uid, activeAccountId);
       await loadSummary();
     } catch (cause) {
       setState("failed"); setError(cause instanceof Error ? cause.message : "Synchronization failed.");
     }
-  }, [user?.uid, activeAccountId, connected, failedCount, loadSummary]);
+  }, [user?.uid, activeAccountId, connected, loadSummary]);
 
   const retry = useCallback(async () => { await synchronize(true); }, [synchronize]);
 

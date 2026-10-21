@@ -14,11 +14,13 @@ export function FarmSyncStatus() {
   const label = state === "syncing" ? "Syncing farm records…" : isFailed ? `Sync failed · ${pendingCount} pending` : isOffline ? pendingCount ? `${pendingCount} saved offline` : "Offline · saved records available" : pendingCount ? `${pendingCount} pending changes` : "Farm records synced";
   const color = isFailed ? danger : isOffline ? muted : accent;
   return <View accessibilityRole="summary" style={styles.container}>
-    <Ionicons name={isFailed ? "alert-circle-outline" : isOffline ? "cloud-offline-outline" : state === "syncing" ? "sync-outline" : "cloud-done-outline"} size={15} color={color} />
-    <ThemedText type="tiny" color={color} style={styles.label}>{label}</ThemedText>
-    {isFailed ? <TouchableOpacity onPress={() => void retry()} accessibilityRole="button" accessibilityLabel="Retry farm synchronization"><ThemedText type="tiny" color={accent} style={styles.retry}>Retry</ThemedText></TouchableOpacity> : null}
-    {error && isFailed ? <ThemedText accessibilityLiveRegion="polite" style={styles.hidden}>{error}</ThemedText> : null}
+    <View style={styles.statusRow}>
+      <Ionicons name={isFailed ? "alert-circle-outline" : isOffline ? "cloud-offline-outline" : state === "syncing" ? "sync-outline" : "cloud-done-outline"} size={15} color={color} />
+      <ThemedText type="tiny" color={color} style={styles.label}>{label}</ThemedText>
+      {isFailed ? <TouchableOpacity onPress={() => void retry()} accessibilityRole="button" accessibilityLabel="Retry farm synchronization"><ThemedText type="tiny" color={accent} style={styles.retry}>Retry</ThemedText></TouchableOpacity> : null}
+    </View>
+    {error ? <ThemedText type="tiny" color={danger} accessibilityLiveRegion="polite" style={styles.error}>{error}</ThemedText> : null}
   </View>;
 }
 
-const styles = StyleSheet.create({ container: { minHeight: 32, paddingHorizontal: 19, flexDirection: "row", alignItems: "center", gap: 7 }, label: { flex: 1 }, retry: { fontWeight: "700", paddingVertical: 5, paddingLeft: 8 }, hidden: { display: "none" } });
+const styles = StyleSheet.create({ container: { minHeight: 32, paddingHorizontal: 19, paddingVertical: 4, gap: 2 }, statusRow: { minHeight: 28, flexDirection: "row", alignItems: "center", gap: 7 }, label: { flex: 1 }, retry: { fontWeight: "700", paddingVertical: 5, paddingLeft: 8 }, error: { paddingLeft: 22, paddingBottom: 4 } });

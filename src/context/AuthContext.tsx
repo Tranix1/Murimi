@@ -7,6 +7,7 @@ import React, {
   useState,
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getFarmAccountMetadata, saveFarmAccountMetadata } from "@/services/farmRepository";
 
 import {
   getAuth,
@@ -18,7 +19,8 @@ import type { AccountType, CurrentRole } from "@/types/types";
 
 export type SavedAccount = {
   id: string;
-  name: "acc 1" | "acc 2";
+  number: number;
+  name: string;
   currentRole: CurrentRole;
 };
 
@@ -74,8 +76,9 @@ export type AuthContextValue = {
   accounts: SavedAccount[];
   activeAccountId: string | null;
   activeAccountName: SavedAccount["name"] | null;
-  createAccount: () => Promise<SavedAccount | null>;
+  createAccount: (name: string) => Promise<SavedAccount | null>;
   switchAccount: (accountId: string) => Promise<boolean>;
+  removeFarmAccount: (accountId: string) => Promise<boolean>;
 
   // Called after Firebase phone OTP authentication succeeds.
   Login: (input: LoginInput) => Promise<AuthResponse>;
@@ -88,6 +91,7 @@ export type AuthContextValue = {
   updateUserProfile: (displayName: string) => Promise<boolean>;
 
   Logout: () => Promise<boolean>;
+  clearDeletedUserData: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(
@@ -135,10 +139,20 @@ export function AuthProvider({
       ]);
       let nextAccounts: SavedAccount[] = storedAccounts ? JSON.parse(storedAccounts) : [];
       if (!Array.isArray(nextAccounts)) nextAccounts = [];
+      nextAccounts = nextAccounts.map((account, index) => {
+        const parsedNumber = Number(account.number ?? String(account.id ?? "").match(/\d+/)?.[0] ?? String(account.name ?? "").match(/\d+/)?.[0]);
+        return { ...account, id: String(account.id ?? index + 1), number: Number.isInteger(parsedNumber) && parsedNumber > 0 ? parsedNumber : index + 1, name: typeof account.name === "string" && account.name.trim() ? account.name.trim() : `Account ${index + 1}` };
+      });
+      try {
+        const cloudAccounts = await getFarmAccountMetadata(firebaseUser.uid);
+        if (cloudAccounts.length) nextAccounts = cloudAccounts as SavedAccount[];
+      } catch (error) {
+        console.warn("Could not restore Murimi farm account names from cloud; using the saved device copy.", error);
+      }
       let storedRoleValue: CurrentRole | null = storedRole ? JSON.parse(storedRole) : null;
       if (!nextAccounts.length && (storedRoleValue || accountType)) {
         const firstRole = storedRoleValue ?? defaultRole(accountType);
-        nextAccounts = [{ id: "acc1", name: "acc 1", currentRole: firstRole }];
+        nextAccounts = [{ id: "1", number: 1, name: "Account 1", currentRole: firstRole }];
         await AsyncStorage.setItem(accountsStorageKey(firebaseUser.uid), JSON.stringify(nextAccounts));
       }
       const selectedAccount = nextAccounts.find((item) => item.id === storedActiveId) ?? nextAccounts[0];
@@ -147,9 +161,11 @@ export function AuthProvider({
         await AsyncStorage.setItem(activeAccountStorageKey(firebaseUser.uid), selectedAccount.id);
         await AsyncStorage.setItem(currentRoleStorageKey(firebaseUser.uid), JSON.stringify(nextRole));
       }
+      await AsyncStorage.setItem(accountsStorageKey(firebaseUser.uid), JSON.stringify(nextAccounts));
       setAccounts(nextAccounts);
       setCurrentRole(nextRole);
       setActiveAccountId(selectedAccount?.id ?? (nextAccounts[0]?.id ?? null));
+      await Promise.all(nextAccounts.map((account) => saveFarmAccountMetadata(firebaseUser.uid, account).catch((error) => console.warn(`Could not sync farm account ${account.number} metadata.`, error))));
     } catch (error) {
       console.error("Failed to restore saved accounts:", error);
     }
@@ -248,13 +264,18 @@ export function AuthProvider({
     }
   };
 
-  const createAccount = async (): Promise<SavedAccount | null> => {
+  const createAccount = async (accountName: string): Promise<SavedAccount | null> => {
     if (!user) return null;
-    if (accounts.length >= 2) return null;
-    const accountNumber = accounts.length + 1;
+    if (accounts.length >= 10) return null;
+    const name = accountName.trim();
+    if (!name || name.length > 40 || accounts.some((account) => account.name.toLocaleLowerCase() === name.toLocaleLowerCase())) return null;
+    const usedNumbers = new Set(accounts.map((account) => account.number));
+    const accountNumber = Array.from({ length: 10 }, (_, index) => index + 1).find((number) => !usedNumbers.has(number));
+    if (!accountNumber) return null;
     const account: SavedAccount = {
-      id: `acc${accountNumber}`,
-      name: `acc ${accountNumber}` as SavedAccount["name"],
+      id: String(accountNumber),
+      number: accountNumber,
+      name,
       currentRole: { ...currentRole },
     };
     const nextAccounts = [...accounts, account];
@@ -262,6 +283,7 @@ export function AuthProvider({
       await AsyncStorage.setItem(accountsStorageKey(user.uid), JSON.stringify(nextAccounts));
       await AsyncStorage.setItem(currentRoleStorageKey(user.uid), JSON.stringify(account.currentRole));
       await AsyncStorage.setItem(activeAccountStorageKey(user.uid), account.id);
+      try { await saveFarmAccountMetadata(user.uid, account); } catch (error) { console.warn("Farm account was saved on this device but its cloud metadata could not sync yet.", error); }
       setAccounts(nextAccounts);
       setCurrentRole(account.currentRole);
       setActiveAccountId(account.id);
@@ -284,6 +306,29 @@ export function AuthProvider({
       return true;
     } catch (error) {
       console.error("Failed to switch account:", error);
+      return false;
+    }
+  };
+
+  const removeFarmAccount = async (accountId: string): Promise<boolean> => {
+    if (!user) return false;
+    const nextAccounts = accounts.filter((account) => account.id !== accountId);
+    if (nextAccounts.length === accounts.length) return false;
+    const nextActive = activeAccountId === accountId ? nextAccounts[0] : nextAccounts.find((account) => account.id === activeAccountId);
+    try {
+      await AsyncStorage.setItem(accountsStorageKey(user.uid), JSON.stringify(nextAccounts));
+      if (nextActive) {
+        await AsyncStorage.setItem(activeAccountStorageKey(user.uid), nextActive.id);
+        await AsyncStorage.setItem(currentRoleStorageKey(user.uid), JSON.stringify(nextActive.currentRole));
+      } else {
+        await AsyncStorage.multiRemove([activeAccountStorageKey(user.uid), currentRoleStorageKey(user.uid)]);
+      }
+      setAccounts(nextAccounts);
+      setActiveAccountId(nextActive?.id ?? null);
+      setCurrentRole(nextActive?.currentRole ?? defaultRole());
+      return true;
+    } catch (error) {
+      console.error("Failed to remove farm account:", error);
       return false;
     }
   };
@@ -330,6 +375,17 @@ export function AuthProvider({
     }
   };
 
+  const clearDeletedUserData = async (): Promise<void> => {
+    const uid = user?.uid;
+    if (uid) await AsyncStorage.multiRemove([accountsStorageKey(uid), currentRoleStorageKey(uid), activeAccountStorageKey(uid)]);
+    setUser(null);
+    setIsSignedIn(false);
+    setAccounts([]);
+    setCurrentRole(defaultRole());
+    setActiveAccountId(null);
+    try { await signOut(getAuth()); } catch { /* The server may already have invalidated this user. */ }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -342,11 +398,13 @@ export function AuthProvider({
         activeAccountName: accounts.find((account) => account.id === activeAccountId)?.name ?? null,
         createAccount,
         switchAccount,
+        removeFarmAccount,
         Login,
         signUp,
         setupUser,
         updateUserProfile,
         Logout,
+        clearDeletedUserData,
       }}
     >
       {children}

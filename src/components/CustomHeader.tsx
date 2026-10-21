@@ -11,9 +11,10 @@ type CustomHeaderProps = {
   filterElement?: (value: boolean) => void;
   selectProfileImage?: () => void;
   selectedImage?: { uri: string } | null;
+  showAccountAction?: boolean;
 };
 
-export default function CustomHeader({ pageTitle = "Murimi", addingNavigate, filterElement }: CustomHeaderProps) {
+export default function CustomHeader({ pageTitle = "Murimi", addingNavigate, filterElement, showAccountAction = true }: CustomHeaderProps) {
   const accent = useThemeColor("accent");
   const background = useThemeColor("background");
   const text = useThemeColor("text");
@@ -29,7 +30,7 @@ export default function CustomHeader({ pageTitle = "Murimi", addingNavigate, fil
       filterElement(true);
       return;
     }
-    router.push("/Account/Accounts" as never);
+    router.push("/Account/Settings" as never);
   };
 
   return (
@@ -44,20 +45,20 @@ export default function CustomHeader({ pageTitle = "Murimi", addingNavigate, fil
         </View>
       </View>
 
-      <TouchableOpacity
+      {showAccountAction ? <TouchableOpacity
         accessibilityRole="button"
-        accessibilityLabel={addingNavigate ? "Add" : filterElement ? "Filter" : "Switch account"}
+        accessibilityLabel={addingNavigate ? "Add" : filterElement ? "Filter" : "Account settings"}
         activeOpacity={0.75}
         onPress={handleAction}
         style={[styles.action, { backgroundColor: `${accent}14` }]}
       >
         <Ionicons
-          name={addingNavigate ? "add" : filterElement ? "options-outline" : "swap-horizontal-outline"}
+          name={addingNavigate ? "add" : filterElement ? "options-outline" : "person-circle-outline"}
           size={20}
           color={accent}
         />
-        {!addingNavigate && !filterElement && <ThemedText type="tiny" style={[styles.actionLabel, { color: accent }]}>Accounts</ThemedText>}
-      </TouchableOpacity>
+        {!addingNavigate && !filterElement && <ThemedText type="tiny" style={[styles.actionLabel, { color: accent }]}>Account</ThemedText>}
+      </TouchableOpacity> : null}
     </View>
   );
 }

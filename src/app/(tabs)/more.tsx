@@ -10,6 +10,7 @@ import { ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
 export default function MoreScreen() {
   const { activeAccountName } = useAuth(); const text = useThemeColor("text"); const muted = useThemeColor("textlight"); const accent = useThemeColor("accent");
   const items: { title: string; caption: string; icon: keyof typeof Ionicons.glyphMap; path: string }[] = [
+    { title: "Account", caption: "View account details, log out or clear farm data", icon: "person-circle-outline", path: "/Account/Settings" },
     { title: "Purchases", caption: "Record purchases and view purchase history", icon: "cart-outline", path: "/Farm/Purchases" },
     { title: "Expenses", caption: "Record and review farm expenses", icon: "receipt-outline", path: "/Farm/Expenses" },
     { title: "Sales settings", caption: "Manage customer categories, customers and payment methods", icon: "people-outline", path: "/Farm/SalesSettings" },

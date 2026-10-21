@@ -304,8 +304,9 @@ export async function getFarmSyncSummary(uid: string, accountId: string) {
   const database = await getFarmDatabase();
   const pending = await database.getFirstAsync<{ count: number }>("SELECT COUNT(*) AS count FROM farm_sync_queue WHERE uid=? AND account_id=?", uid, accountId);
   const failed = await database.getFirstAsync<{ count: number }>("SELECT COUNT(*) AS count FROM farm_sync_queue WHERE uid=? AND account_id=? AND last_error IS NOT NULL", uid, accountId);
+  const lastError = await database.getFirstAsync<{ last_error: string }>("SELECT last_error FROM farm_sync_queue WHERE uid=? AND account_id=? AND last_error IS NOT NULL ORDER BY created_at ASC LIMIT 1", uid, accountId);
   const lastSync = await database.getFirstAsync<{ last_synced_at: string | null }>("SELECT last_synced_at FROM farm_sync_metadata WHERE uid=? AND account_id=?", uid, accountId);
-  return { pendingCount: pending?.count ?? 0, failedCount: failed?.count ?? 0, lastSyncedAt: lastSync?.last_synced_at ?? null };
+  return { pendingCount: pending?.count ?? 0, failedCount: failed?.count ?? 0, lastError: lastError?.last_error ?? null, lastSyncedAt: lastSync?.last_synced_at ?? null };
 }
 
 export async function setFarmLastSyncedAt(uid: string, accountId: string): Promise<void> {
@@ -334,5 +335,34 @@ export function notifyFarmSyncChanges(uid: string, accountId: string): void {
 
 export async function deleteLocalFarmRecord(uid: string, accountId: string, collectionName: FarmCollection, id: string): Promise<void> {
   await commitLocalFarmChanges(uid, accountId, [{ collectionName, id, record: null, operation: "delete" }]);
+}
+
+/** Removes all farm rows and pending sync data belonging to a user after server deletion succeeds. */
+export async function purgeLocalFarmUser(uid: string): Promise<void> {
+  const database = await getFarmDatabase();
+  const rows = await database.getAllAsync<{ account_id: string; collection_name: FarmCollection }>("SELECT DISTINCT account_id, collection_name FROM farm_records WHERE uid=?", uid);
+  await inTransaction(async (transaction) => {
+    await transaction.runAsync("DELETE FROM farm_sync_queue WHERE uid=?", uid);
+    await transaction.runAsync("DELETE FROM farm_records WHERE uid=?", uid);
+    await transaction.runAsync("DELETE FROM farm_sync_metadata WHERE uid=?", uid);
+  });
+  rows.forEach((row) => notifyLocalFarmChanges(uid, row.account_id, row.collection_name));
+  [...new Set(rows.map((row) => row.account_id))].forEach((accountId) => notifyFarmSyncChanges(uid, accountId));
+}
+
+/** Removes one account's farm rows and pending writes after its cloud data is deleted. */
+export async function purgeLocalFarmAccount(uid: string, accountId: string): Promise<void> {
+  const database = await getFarmDatabase();
+  const rows = await database.getAllAsync<{ collection_name: FarmCollection }>(
+    "SELECT DISTINCT collection_name FROM farm_records WHERE uid=? AND account_id=? UNION SELECT DISTINCT collection_name FROM farm_sync_queue WHERE uid=? AND account_id=?",
+    uid, accountId, uid, accountId,
+  );
+  await inTransaction(async (transaction) => {
+    await transaction.runAsync("DELETE FROM farm_sync_queue WHERE uid=? AND account_id=?", uid, accountId);
+    await transaction.runAsync("DELETE FROM farm_records WHERE uid=? AND account_id=?", uid, accountId);
+    await transaction.runAsync("DELETE FROM farm_sync_metadata WHERE uid=? AND account_id=?", uid, accountId);
+  });
+  rows.forEach((row) => notifyLocalFarmChanges(uid, accountId, row.collection_name));
+  notifyFarmSyncChanges(uid, accountId);
 }
 
