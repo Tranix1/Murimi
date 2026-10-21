@@ -8,7 +8,6 @@ import { calculateFarmReportAnalytics, createFarmExportWorkbook, createFarmExpor
 import { FARM_COLLECTIONS, type FarmCollection } from "@/services/farmRepository";
 import { Ionicons } from "@expo/vector-icons";
 import { File, Paths } from "expo-file-system";
-import * as Sharing from "expo-sharing";
 import { useEffect, useState } from "react";
 import { Alert, ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
 
@@ -84,6 +83,7 @@ export default function ReportsScreen() {
             const file = new File(Paths.cache, fileName);
             file.create({ intermediates: true, overwrite: true });
             file.write(archiveBytes);
+            const Sharing = await import("expo-sharing");
             if (!(await Sharing.isAvailableAsync())) throw new Error("File sharing is unavailable on this platform. Open Reports & Export on an Android or iOS device to share the ZIP file.");
             const mimeType = exportFormat === "xlsx" ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "application/zip";
             await Sharing.shareAsync(file.uri, { mimeType, dialogTitle: "Share Murimi reports" });

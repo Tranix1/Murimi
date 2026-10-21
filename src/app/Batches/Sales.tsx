@@ -7,7 +7,7 @@ import { ThemedText } from "@/components/ThemedText";
 import { useThemeColor } from "@/hooks/useThemeColor";
 import { useAuth } from "@/context/AuthContext";
 import { useFarmRecords } from "@/hooks/useFarmRecords";
-import { createFarmRecord, ensureDefaultPaymentMethods, saveSale } from "@/services/farmRepository";
+import { createFarmRecord, deleteFarmRecord, ensureDefaultPaymentMethods, saveSale } from "@/services/farmRepository";
 import type { Batch, CustomerCategory, FarmCustomer, FarmPaymentMethod, Sale } from "@/types/farm";
 
 export default function BatchSalesScreen() {
@@ -23,6 +23,7 @@ export default function BatchSalesScreen() {
   const [quantity, setQuantity] = useState(""); const [pricePerUnit, setPricePerUnit] = useState(""); const [paymentReceived, setPaymentReceived] = useState("");
   const [customer, setCustomer] = useState(""); const [customerMode, setCustomerMode] = useState<"saved" | "new">("new"); const [categoryId, setCategoryId] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState(""); const [customerSearch, setCustomerSearch] = useState(""); const [saveNewCustomer, setSaveNewCustomer] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState(""); const [newCustomerName, setNewCustomerName] = useState(""); const [managing, setManaging] = useState(false);
   const [paymentDate, setPaymentDate] = useState(""); const [paymentMethodId, setPaymentMethodId] = useState(""); const [deliveryCost, setDeliveryCost] = useState("0"); const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null); const [saving, setSaving] = useState(false);
   const accent = useThemeColor("accent"); const surface = useThemeColor("backgroundLight"); const border = useThemeColor("border"); const muted = useThemeColor("textlight"); const bad = useThemeColor("bad");
@@ -31,6 +32,64 @@ export default function BatchSalesScreen() {
   const matchingCustomers = customers.filter((item) => item.active && item.categoryId === categoryId && item.name.toLowerCase().includes(customerSearch.trim().toLowerCase()));
   const totalValue = (Number(quantity) || 0) * (Number(pricePerUnit) || 0);
   useEffect(() => { if (user?.uid && activeAccountId) void ensureDefaultPaymentMethods(user.uid, activeAccountId); }, [user?.uid, activeAccountId]);
+
+  const addCategory = async () => {
+    const name = newCategoryName.trim();
+    if (!user?.uid || !activeAccountId) return setError("Sign in and select an account before adding a category.");
+    if (!name) return setError("Enter a category name.");
+    if (activeCategories.some((item) => item.name.trim().toLowerCase() === name.toLowerCase())) return setError("A category with this name already exists.");
+    setManaging(true); setError(null);
+    try {
+      const id = await createFarmRecord(user.uid, activeAccountId, "customerCategories", { name, active: true });
+      setNewCategoryName(""); setCategoryId(id); setSelectedCustomerId("");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not add this category."); }
+    finally { setManaging(false); }
+  };
+
+  const confirmDeleteCategory = (item: CustomerCategory) => {
+    const linked = customers.filter((customerItem) => customerItem.active && customerItem.categoryId === item.id).length;
+    Alert.alert("Delete category", linked ? `"${item.name}" has ${linked} saved customer${linked === 1 ? "" : "s"}. They will no longer appear until you re-add them to another category. Past sales are not changed.` : `Delete "${item.name}"?`, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: async () => {
+        if (!user?.uid || !activeAccountId) return;
+        setManaging(true); setError(null);
+        try {
+          await deleteFarmRecord(user.uid, activeAccountId, "customerCategories", item.id);
+          if (categoryId === item.id) { setCategoryId(""); setSelectedCustomerId(""); }
+        } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not delete this category."); }
+        finally { setManaging(false); }
+      } },
+    ]);
+  };
+
+  const addCustomer = async () => {
+    const name = newCustomerName.trim();
+    if (!user?.uid || !activeAccountId) return setError("Sign in and select an account before adding a customer.");
+    if (!categoryId) return setError("Select a category before adding a customer.");
+    if (!name) return setError("Enter a customer name.");
+    if (customers.some((item) => item.active && item.categoryId === categoryId && item.name.trim().toLowerCase() === name.toLowerCase())) return setError("This customer already exists in the selected category.");
+    setManaging(true); setError(null);
+    try {
+      const id = await createFarmRecord(user.uid, activeAccountId, "customers", { name, categoryId, categoryIds: [categoryId], active: true });
+      setNewCustomerName(""); setSelectedCustomerId(id); setCustomer(name);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not add this customer."); }
+    finally { setManaging(false); }
+  };
+
+  const confirmDeleteCustomer = (item: FarmCustomer) => {
+    Alert.alert("Delete customer", `Delete "${item.name}"? Past sales keep the buyer name they were recorded with.`, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: async () => {
+        if (!user?.uid || !activeAccountId) return;
+        setManaging(true); setError(null);
+        try {
+          await deleteFarmRecord(user.uid, activeAccountId, "customers", item.id);
+          if (selectedCustomerId === item.id) { setSelectedCustomerId(""); setCustomer(""); }
+        } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not delete this customer."); }
+        finally { setManaging(false); }
+      } },
+    ]);
+  };
 
   const save = async () => {
     const qty = Number(quantity); const price = Number(pricePerUnit); const paid = paymentReceived.trim() ? Number(paymentReceived) : 0; const delivery = Number(deliveryCost);
@@ -64,9 +123,11 @@ export default function BatchSalesScreen() {
   return <BatchPage title="Record sale"><ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
     <ThemedText type="tiny" color={muted}>Cash collected is recorded separately from unpaid sale value.</ThemedText>
     <FarmDatePicker label="Sale date" value={date} onChange={setDate} />
-    <ThemedText type="defaultSemiBold">Customer category</ThemedText><View style={styles.chips}>{activeCategories.map((item) => <Chip key={item.id} label={item.name} selected={categoryId === item.id} onPress={() => { setCategoryId(item.id); setSelectedCustomerId(""); }} accent={accent} surface={surface} border={border} muted={muted} />)}</View>
+    <ThemedText type="defaultSemiBold">Customer category</ThemedText><View style={styles.chips}>{activeCategories.map((item) => <Chip key={item.id} label={item.name} selected={categoryId === item.id} onPress={() => { setCategoryId(item.id); setSelectedCustomerId(""); }} onDelete={() => confirmDeleteCategory(item)} accent={accent} surface={surface} border={border} muted={muted} />)}{!activeCategories.length && <ThemedText type="tiny" color={muted}>No categories yet. Add one below.</ThemedText>}</View>
+    <FarmField label="Add a category" value={newCategoryName} onChangeText={setNewCategoryName} placeholder="For example, Butcheries" />
+    <FarmButton label="Add category" onPress={() => void addCategory()} disabled={managing} />
     <View style={styles.modeRow}><Chip label="Select saved customer" selected={customerMode === "saved"} onPress={() => setCustomerMode("saved")} accent={accent} surface={surface} border={border} muted={muted} /><Chip label="Enter new customer" selected={customerMode === "new"} onPress={() => { setCustomerMode("new"); setSelectedCustomerId(""); }} accent={accent} surface={surface} border={border} muted={muted} /></View>
-    {customerMode === "saved" ? <><FarmField label="Search customers in category" value={customerSearch} onChangeText={setCustomerSearch} placeholder="Type a customer name" /><View style={styles.chips}>{matchingCustomers.map((item) => <Chip key={item.id} label={item.name} selected={selectedCustomerId === item.id} onPress={() => { setSelectedCustomerId(item.id); setCustomer(item.name); }} accent={accent} surface={surface} border={border} muted={muted} />)}{!matchingCustomers.length && <ThemedText type="tiny" color={muted}>No saved customers in this category. Enter a new customer to continue.</ThemedText>}</View></> : <><FarmField label="Buyer name (optional)" value={customer} onChangeText={setCustomer} placeholder="Buyer name" /><TouchableOpacity style={styles.checkbox} onPress={() => setSaveNewCustomer(!saveNewCustomer)}><ThemedText color={accent}>{saveNewCustomer ? "☑" : "☐"}</ThemedText><ThemedText type="tiny">Save this customer for future sales</ThemedText></TouchableOpacity></>}
+    {customerMode === "saved" ? <><FarmField label="Search customers in category" value={customerSearch} onChangeText={setCustomerSearch} placeholder="Type a customer name" /><View style={styles.chips}>{matchingCustomers.map((item) => <Chip key={item.id} label={item.name} selected={selectedCustomerId === item.id} onPress={() => { setSelectedCustomerId(item.id); setCustomer(item.name); }} onDelete={() => confirmDeleteCustomer(item)} accent={accent} surface={surface} border={border} muted={muted} />)}{!matchingCustomers.length && <ThemedText type="tiny" color={muted}>{categoryId ? "No saved customers in this category. Add one below." : "Select a category to see its customers."}</ThemedText>}</View><FarmField label="Add a customer to this category" value={newCustomerName} onChangeText={setNewCustomerName} placeholder="Customer name" /><FarmButton label="Add customer" onPress={() => void addCustomer()} disabled={managing} /></> : <><FarmField label="Buyer name (optional)" value={customer} onChangeText={setCustomer} placeholder="Buyer name" /><TouchableOpacity style={styles.checkbox} onPress={() => setSaveNewCustomer(!saveNewCustomer)}><ThemedText color={accent}>{saveNewCustomer ? "☑" : "☐"}</ThemedText><ThemedText type="tiny">Save this customer for future sales</ThemedText></TouchableOpacity></>}
     <ThemedText type="defaultSemiBold">Product type</ThemedText><View style={styles.modeRow}>{(["live_birds", "dressed_birds"] as const).map((type) => <Chip key={type} label={type === "live_birds" ? "Live birds" : "Dressed birds"} selected={productType === type} onPress={() => { setProductType(type); setUnit("birds"); }} accent={accent} surface={surface} border={border} muted={muted} />)}</View>
     {productType === "dressed_birds" && <View style={styles.modeRow}>{(["birds", "kg"] as const).map((value) => <Chip key={value} label={`Per ${value}`} selected={unit === value} onPress={() => setUnit(value)} accent={accent} surface={surface} border={border} muted={muted} />)}</View>}
     <ThemedText type="tiny" color={muted}>{productType === "live_birds" ? `Live birds available: ${batch?.currentBirdsAlive ?? batch?.initialQuantity ?? "—"}` : "Dressed product should come from a slaughter record."}</ThemedText>
@@ -78,6 +139,6 @@ export default function BatchSalesScreen() {
     {error && <ThemedText color={bad}>{error}</ThemedText>}<FarmButton label="Save sale" onPress={() => void save()} disabled={saving} />
   </ScrollView></BatchPage>;
 }
-function Chip({ label, selected, onPress, accent, surface, border, muted }: { label: string; selected: boolean; onPress: () => void; accent: string; surface: string; border: string; muted: string }) { return <TouchableOpacity onPress={onPress} style={[styles.choice, { backgroundColor: selected ? accent : surface, borderColor: selected ? accent : border }]}><ThemedText type="tiny" color={selected ? "#FFFFFF" : muted}>{label}</ThemedText></TouchableOpacity>; }
+function Chip({ label, selected, onPress, onDelete, accent, surface, border, muted }: { label: string; selected: boolean; onPress: () => void; onDelete?: () => void; accent: string; surface: string; border: string; muted: string }) { return <View style={[styles.choice, { backgroundColor: selected ? accent : surface, borderColor: selected ? accent : border }]}><TouchableOpacity onPress={onPress} style={styles.chipLabel}><ThemedText type="tiny" color={selected ? "#FFFFFF" : muted}>{label}</ThemedText></TouchableOpacity>{onDelete && <TouchableOpacity onPress={onDelete} hitSlop={8} style={styles.chipDelete}><ThemedText type="tiny" color={selected ? "#FFFFFF" : muted}>✕</ThemedText></TouchableOpacity>}</View>; }
 const money = (value: number) => `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const styles = StyleSheet.create({ form: { padding: 18, paddingBottom: 30, gap: 14 }, modeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, choice: { minHeight: 40, borderWidth: 1, borderRadius: 12, alignItems: "center", justifyContent: "center", paddingHorizontal: 11 }, checkbox: { minHeight: 40, flexDirection: "row", alignItems: "center", gap: 8 }, total: { borderWidth: 1, borderRadius: 14, padding: 14, gap: 3 } });
+const styles = StyleSheet.create({ form: { padding: 18, paddingBottom: 30, gap: 14 }, modeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, choice: { minHeight: 40, borderWidth: 1, borderRadius: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 11 }, chipLabel: { minHeight: 40, justifyContent: "center" }, chipDelete: { marginLeft: 8, minHeight: 40, justifyContent: "center" }, checkbox: { minHeight: 40, flexDirection: "row", alignItems: "center", gap: 8 }, total: { borderWidth: 1, borderRadius: 14, padding: 14, gap: 3 } });

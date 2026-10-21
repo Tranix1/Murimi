@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import "./inventoryCosting.test.mjs";
 import * as XLSX from "xlsx";
 import { buildCategoryCsvFiles, filterReportRecords, recordsToCsv, selectReportCategories } from "../src/services/reportingUtils.ts";
 import { createXlsxWorkbook } from "../src/services/spreadsheetExport.ts";

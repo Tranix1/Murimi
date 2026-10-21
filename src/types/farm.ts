@@ -23,6 +23,7 @@ export type Batch = FarmRecord & {
   dateStarted: string;
   dateStartedEstimated?: boolean;
   initialQuantity: number;
+  paidQuantity?: number;
   currentBirdsAlive?: number;
   costPerUnit?: number;
   initialAverageWeightKg?: number;
@@ -190,13 +191,15 @@ export type PurchaseCategoryDefinition = FarmRecord & {
   name: string;
   financialClassification: PurchaseFinancialClassification;
   inventoryTracked: boolean;
+  requiresCapacity?: boolean;
+  capacityUnit?: "kg" | "litres";
   active: boolean;
 };
 export type FarmSupplier = FarmRecord & {
   name: string;
   active: boolean;
 };
-export type PurchaseAllocation = { id?: string; batchId: string; quantity?: number; cost?: number; allocatedAt: string };
+export type PurchaseAllocation = { id?: string; batchId: string; batchNameSnapshot?: string; batchNumberSnapshot?: string; quantity?: number; cost?: number; allocatedAt: string };
 export type Purchase = FarmRecord & {
   itemName: string;
   inventoryItemId?: string;
@@ -217,6 +220,12 @@ export type Purchase = FarmRecord & {
   unitPrice?: number;
   packageWeight?: number;
   packageVolume?: number;
+  itemCount?: number;
+  pricePerItem?: number;
+  measureUnit?: string;
+  amountPerItem?: number;
+  capacityPerItem?: number;
+  capacityUnit?: "kg" | "litres";
   totalCost: number;
   discount?: number;
   additionalCharges?: number;
@@ -226,6 +235,15 @@ export type Purchase = FarmRecord & {
   paymentMethodName?: string;
   receiptStatus?: "ordered" | "received";
   supplier?: string;
+  supplierId?: string;
+  currency?: string;
+  exchangeRate?: number;
+  originalTotalCost?: number;
+  originalAmountPaid?: number;
+  originalOutstanding?: number;
+  originalPricePerItem?: number;
+  originalAdditionalCharges?: number;
+  fullyPaid?: boolean;
   invoiceReference?: string;
   notes?: string;
   location?: string;
@@ -251,11 +269,14 @@ export type InventoryItem = FarmRecord & {
 export type StockMovement = FarmRecord & {
   itemId: string;
   date: string;
-  type: "received" | "allocated" | "consumed" | "sold" | "wasted" | "adjustment" | "transfer";
+  type: "received" | "allocated" | "consumed" | "sold" | "wasted" | "returned" | "adjustment" | "transfer";
   quantity: number;
   unit: string;
   batchId?: string;
   purchaseId?: string;
+  reversesMovementId?: string;
+  batchNameSnapshot?: string;
+  batchNumberSnapshot?: string;
   financialClassification?: PurchaseFinancialClassification;
   unitCost?: number;
   totalCost?: number;
@@ -370,6 +391,7 @@ export type BatchSummary = {
   mortalityPercent: number | null;
   birdsSold: number;
   costsIncurred: number;
+  costsReliable?: boolean;
   feedKg: number;
   feedBags50Kg: number;
   averageLiveWeightKg: number | null;

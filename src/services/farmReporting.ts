@@ -16,7 +16,7 @@ export const REPORT_CATEGORY_LABELS: Record<FarmCollection, string> = {
     sales: "Sales and revenue", slaughter: "Slaughter records", assets: "Fixed assets", plans: "Farm plans",
     transactions: "Cash movements", stock: "Inventory items", stockMovements: "Stock movements and consumption",
     payments: "Customer payments", treatments: "Treatments", customerCategories: "Customer categories",
-    customers: "Customers", paymentMethods: "Payment methods", purchaseCategories: "Purchase categories", suppliers: "Suppliers",
+    customers: "Customers", paymentMethods: "Payment methods", purchaseCategories: "Purchase categories", purchaseMeasures: "Purchase measures", suppliers: "Suppliers",
 };
 
 export const FINANCIAL_COLLECTIONS = new Set<FarmCollection>([

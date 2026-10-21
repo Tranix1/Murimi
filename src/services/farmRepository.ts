@@ -13,6 +13,7 @@ import {
 } from "@/services/farmLocalDatabase";
 import type { Batch, BatchProblem, DailyRecord, Expense, FarmRecord, MortalityRecord, Sale, SalePayment, SlaughterRecord } from "@/types/farm";
 import { calculateClosingBirdCount, calculateCurrentBirdCount } from "@/Utilities/farmCalculations";
+import { calculateBatchAllocatedStock, calculateInventoryBalances } from "@/Utilities/inventoryCalculations";
 import type { DocumentData, QueryDocumentSnapshot } from "@react-native-firebase/firestore";
 import {
   collection,
@@ -29,8 +30,8 @@ import {
   type Unsubscribe,
 } from "@react-native-firebase/firestore";
 
-export type FarmCollection = "batches" | "dailyRecords" | "mortalityRecords" | "batchProblems" | "weights" | "expenses" | "purchases" | "sales" | "slaughter" | "assets" | "plans" | "transactions" | "stock" | "stockMovements" | "payments" | "treatments" | "customerCategories" | "customers" | "paymentMethods" | "purchaseCategories" | "suppliers";
-export const FARM_COLLECTIONS: FarmCollection[] = ["batches", "dailyRecords", "mortalityRecords", "batchProblems", "weights", "expenses", "purchases", "sales", "slaughter", "assets", "plans", "transactions", "stock", "stockMovements", "payments", "treatments", "customerCategories", "customers", "paymentMethods", "purchaseCategories", "suppliers"];
+export type FarmCollection = "batches" | "dailyRecords" | "mortalityRecords" | "batchProblems" | "weights" | "expenses" | "purchases" | "sales" | "slaughter" | "assets" | "plans" | "transactions" | "stock" | "stockMovements" | "payments" | "treatments" | "customerCategories" | "customers" | "paymentMethods" | "purchaseCategories" | "purchaseMeasures" | "suppliers";
+export const FARM_COLLECTIONS: FarmCollection[] = ["batches", "dailyRecords", "mortalityRecords", "batchProblems", "weights", "expenses", "purchases", "sales", "slaughter", "assets", "plans", "transactions", "stock", "stockMovements", "payments", "treatments", "customerCategories", "customers", "paymentMethods", "purchaseCategories", "purchaseMeasures", "suppliers"];
 
 const firestore = getFirestore();
 const farmCollection = (uid: string, accountId: string, name: FarmCollection) => collection(firestore, "users", uid, "farmAccounts", accountId, name);
@@ -53,7 +54,8 @@ function recordFromSnapshot(snapshot: QueryDocumentSnapshot<DocumentData>): Reco
 
 export function subscribeFarmRecords<T extends FarmRecord>(uid: string, accountId: string, collectionName: FarmCollection, callback: (records: T[]) => void, onError: (error: Error) => void): Unsubscribe {
   let active = true;
-  const refreshLocal = () => { void getLocalFarmRecords<Record<string, unknown>>(uid, accountId, collectionName).then((records) => { if (active) callback(records as T[]); }).catch((error: unknown) => { if (active) onError(error instanceof Error ? error : new Error("Could not read local farm records.")); }); };
+  let refreshSequence = 0;
+  const refreshLocal = () => { const sequence = ++refreshSequence; void getLocalFarmRecords<Record<string, unknown>>(uid, accountId, collectionName).then((records) => { if (active && sequence === refreshSequence) callback(records as T[]); }).catch((error: unknown) => { if (active && sequence === refreshSequence) onError(error instanceof Error ? error : new Error("Could not read local farm records.")); }); };
   const unsubscribeLocal = subscribeLocalFarmChanges(uid, accountId, collectionName, refreshLocal);
   refreshLocal();
   const unsubscribeCloud = onSnapshot(query(farmCollection(uid, accountId, collectionName)), (snapshot) => {
@@ -233,8 +235,10 @@ export async function savePurchase(uid: string, accountId: string, input: Omit<i
   if (input.idempotencyKey && !/^[A-Za-z0-9_-]{1,100}$/.test(input.idempotencyKey)) throw new Error("Invalid purchase reference.");
   const reference = input.idempotencyKey ? farmDocument(uid, accountId, "purchases", `purchase_${input.idempotencyKey}`) : doc(farmCollection(uid, accountId, "purchases"));
   if (await getLocalFarmRecord(uid, accountId, "purchases", reference.id)) return reference.id;
+  let selectedBatch: Batch | null = null;
   if (input.batchId) {
-    const batch = await getLocalFarmRecord<Batch>(uid, accountId, "batches", input.batchId);
+    selectedBatch = await getLocalFarmRecord<Batch>(uid, accountId, "batches", input.batchId);
+    const batch = selectedBatch;
     if (batch?.status === "completed" || batch?.status === "archived") throw new Error("This batch is closed. Do not allocate new purchases to it.");
   }
   const created = now();
@@ -261,12 +265,13 @@ export async function savePurchase(uid: string, accountId: string, input: Omit<i
     const movementId = `purchase_received_${reference.id}`;
     changes.push({ collectionName: "stockMovements", id: movementId, record: { id: movementId, ownerId: uid, accountId, itemId, purchaseId: reference.id, date: input.date, type: "received", quantity: input.quantity, unit: input.unit, totalCost, unitCost: input.quantity ? totalCost / input.quantity : undefined, financialClassification, source: "purchase", reason: "Goods received", createdAt: created, updatedAt: created } });
   }
-  const allocations = input.batchId && inventoryTracked && input.receiptStatus === "received" ? [{ id: `${reference.id}_${input.batchId}`, batchId: input.batchId, quantity: input.quantity, allocatedAt: created }] : [];
+  const allocations = input.batchId && inventoryTracked && input.receiptStatus === "received" ? [{ id: `${reference.id}_${input.batchId}`, batchId: input.batchId, quantity: input.quantity, cost: totalCost, allocatedAt: created }] : [];
   if (allocations.length && itemId) {
     const movementId = `purchase_allocated_${reference.id}_${input.batchId}`;
-    changes.push({ collectionName: "stockMovements", id: movementId, record: { id: movementId, ownerId: uid, accountId, itemId, purchaseId: reference.id, date: input.date, type: "allocated", quantity: input.quantity, unit: input.unit ?? "units", batchId: input.batchId, financialClassification, source: "purchase", reason: "Stock allocated to batch; not consumed", createdAt: created, updatedAt: created } });
+    changes.push({ collectionName: "stockMovements", id: movementId, record: { id: movementId, ownerId: uid, accountId, itemId, purchaseId: reference.id, date: input.date, type: "allocated", quantity: input.quantity, unit: input.unit ?? "units", batchId: input.batchId, batchNameSnapshot: selectedBatch?.name, batchNumberSnapshot: selectedBatch?.batchNumber, totalCost, unitCost: input.quantity ? totalCost / input.quantity : undefined, financialClassification, source: "purchase", reason: "Stock allocated to batch; not consumed", createdAt: created, updatedAt: created } });
   }
-  const record = { ...purchaseInput, itemType, inventoryTracked, financialClassification, inventoryItemId: itemId, totalCost, amountPaid, outstanding, allocations, unallocatedQuantity: input.quantity == null ? undefined : Math.max(0, input.quantity - allocations.reduce((sum, allocation) => sum + (allocation.quantity ?? 0), 0)), unallocatedCost: allocations.length ? 0 : totalCost, id: reference.id, ownerId: uid, accountId, createdAt: created, updatedAt: created };
+  const namedAllocations = allocations.map((allocation) => ({ ...allocation, batchNameSnapshot: selectedBatch?.name, batchNumberSnapshot: selectedBatch?.batchNumber }));
+  const record = { ...purchaseInput, itemType, inventoryTracked, financialClassification, inventoryItemId: itemId, totalCost, amountPaid, outstanding, allocations: namedAllocations, unallocatedQuantity: input.quantity == null ? undefined : Math.max(0, input.quantity - namedAllocations.reduce((sum, allocation) => sum + (allocation.quantity ?? 0), 0)), unallocatedCost: namedAllocations.length ? 0 : totalCost, id: reference.id, ownerId: uid, accountId, createdAt: created, updatedAt: created };
   changes.unshift({ collectionName: "purchases", id: reference.id, record });
   const cashId = `purchase_${reference.id}`;
   if (amountPaid > 0) changes.push({ collectionName: "transactions", id: cashId, record: { id: cashId, ownerId: uid, accountId, date: input.date, direction: "outflow", category: `purchase_${input.category}`, amount: amountPaid, description: input.itemName, sourceId: reference.id, createdAt: created, updatedAt: created } });
@@ -277,6 +282,75 @@ export async function savePurchase(uid: string, accountId: string, input: Omit<i
   }
   await commitLocalFarmChanges(uid, accountId, changes);
   return reference.id;
+}
+
+export async function recordStockAllocation(uid: string, accountId: string, input: { itemId: string; batchId: string; quantity: number; date: string; idempotencyKey: string }): Promise<string> {
+  if (!Number.isFinite(input.quantity) || input.quantity <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(input.date)) throw new Error("Enter a valid date and positive allocation quantity.");
+  if (!/^[A-Za-z0-9_-]{1,100}$/.test(input.idempotencyKey)) throw new Error("Invalid stock allocation reference.");
+  const movementId = `allocated_${input.idempotencyKey}`;
+  if (await getLocalFarmRecord(uid, accountId, "stockMovements", movementId)) return movementId;
+  const [item, batch, purchases, movements] = await Promise.all([
+    getLocalFarmRecord<import("@/types/farm").InventoryItem>(uid, accountId, "stock", input.itemId),
+    getLocalFarmRecord<Batch>(uid, accountId, "batches", input.batchId),
+    getLocalFarmRecords<import("@/types/farm").Purchase>(uid, accountId, "purchases"),
+    getLocalFarmRecords<import("@/types/farm").StockMovement>(uid, accountId, "stockMovements"),
+  ]);
+  if (!item?.active || item.inventoryTracked === false || (item.defaultFinancialClassification && item.defaultFinancialClassification !== "consumable")) throw new Error("Choose an active, quantity-tracked consumable item.");
+  if (!batch || batch.status === "completed" || batch.status === "archived") throw new Error("Choose an active batch.");
+  const balance = calculateInventoryBalances([item], purchases, movements).balances[0];
+  if (!balance || balance.financialClassification !== "consumable") throw new Error("This item is not classified as consumable inventory.");
+  if (balance.value == null || balance.averageUnitCost == null) throw new Error("Cost unavailable. Record or restore the purchase cost before allocating this stock.");
+  if (input.quantity > balance.available + 1e-9) throw new Error(`Only ${balance.available} ${item.baseUnit} are available to allocate.`);
+  const allocatedCost = moneyAmount(balance.averageUnitCost * input.quantity);
+  const created = now();
+  const record: import("@/types/farm").StockMovement = {
+    id: movementId, ownerId: uid, accountId, itemId: item.id, batchId: batch.id, batchNameSnapshot: batch.name, batchNumberSnapshot: batch.batchNumber,
+    date: input.date, type: "allocated", quantity: input.quantity, unit: item.baseUnit, totalCost: allocatedCost, unitCost: balance.averageUnitCost,
+    financialClassification: "consumable", source: "batch_allocation", reason: "Stock issued from farm inventory to batch", createdAt: created, updatedAt: created,
+  };
+  await commitLocalFarmChanges(uid, accountId, [{ collectionName: "stockMovements", id: movementId, record }]);
+  return movementId;
+}
+
+export async function recordStockReturn(uid: string, accountId: string, input: { itemId: string; batchId: string; quantity: number; date: string; idempotencyKey: string; reversesMovementId?: string; notes?: string }): Promise<string> {
+  if (!Number.isFinite(input.quantity) || input.quantity <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(input.date) || !/^[A-Za-z0-9_-]{1,100}$/.test(input.idempotencyKey)) throw new Error("Enter a valid return date, quantity, and reference.");
+  const movementId = `returned_${input.idempotencyKey}`;
+  if (await getLocalFarmRecord(uid, accountId, "stockMovements", movementId)) return movementId;
+  const [item, batch, purchases, movements] = await Promise.all([
+    getLocalFarmRecord<import("@/types/farm").InventoryItem>(uid, accountId, "stock", input.itemId),
+    getLocalFarmRecord<Batch>(uid, accountId, "batches", input.batchId),
+    getLocalFarmRecords<import("@/types/farm").Purchase>(uid, accountId, "purchases"),
+    getLocalFarmRecords<import("@/types/farm").StockMovement>(uid, accountId, "stockMovements"),
+  ]);
+  if (!item || !batch) throw new Error("The item or batch is unavailable.");
+  const allocated = calculateBatchAllocatedStock(item.id, batch.id, purchases, movements, item);
+  if (input.quantity > allocated.quantity + 1e-9) throw new Error(`Only ${allocated.quantity} ${item.baseUnit} remain issued to this batch.`);
+  if (allocated.averageUnitCost == null) throw new Error("Cost unavailable for this batch stock; review its purchase record before returning it.");
+  const created = now(); const totalCost = moneyAmount(allocated.averageUnitCost * input.quantity);
+  const record: import("@/types/farm").StockMovement = { id: movementId, ownerId: uid, accountId, itemId: item.id, batchId: batch.id, batchNameSnapshot: batch.name, batchNumberSnapshot: batch.batchNumber, reversesMovementId: input.reversesMovementId, date: input.date, type: "returned", quantity: input.quantity, unit: item.baseUnit, totalCost, unitCost: totalCost / input.quantity, financialClassification: "consumable", source: "batch_return", reason: "Unused stock returned from batch", notes: input.notes, createdAt: created, updatedAt: created };
+  await commitLocalFarmChanges(uid, accountId, [{ collectionName: "stockMovements", id: movementId, record }]);
+  return movementId;
+}
+
+export async function recordStockAdjustment(uid: string, accountId: string, input: { itemId: string; quantity: number; date: string; idempotencyKey: string; totalCost?: number; openingBalance?: boolean; notes?: string }): Promise<string> {
+  if (!Number.isFinite(input.quantity) || input.quantity === 0 || !/^\d{4}-\d{2}-\d{2}$/.test(input.date) || !/^[A-Za-z0-9_-]{1,100}$/.test(input.idempotencyKey)) throw new Error("Enter a valid adjustment date, non-zero quantity, and reference.");
+  const movementId = `adjustment_${input.idempotencyKey}`;
+  if (await getLocalFarmRecord(uid, accountId, "stockMovements", movementId)) return movementId;
+  const [item, purchases, movements] = await Promise.all([
+    getLocalFarmRecord<import("@/types/farm").InventoryItem>(uid, accountId, "stock", input.itemId),
+    getLocalFarmRecords<import("@/types/farm").Purchase>(uid, accountId, "purchases"),
+    getLocalFarmRecords<import("@/types/farm").StockMovement>(uid, accountId, "stockMovements"),
+  ]);
+  if (!item?.active || item.inventoryTracked === false || item.defaultFinancialClassification === "fixed_asset") throw new Error("Choose an active consumable inventory item.");
+  const balance = calculateInventoryBalances([item], purchases, movements).balances[0];
+  if (input.quantity < 0 && -input.quantity > (balance?.available ?? 0) + 1e-9) throw new Error(`Only ${balance?.available ?? 0} ${item.baseUnit} are available to remove.`);
+  const derivedCost = input.quantity < 0 && balance?.averageUnitCost != null ? balance.averageUnitCost * -input.quantity : undefined;
+  const totalCost = input.totalCost == null ? derivedCost : input.totalCost;
+  if (totalCost == null || !Number.isFinite(totalCost) || totalCost < 0 || (input.quantity > 0 && totalCost === 0)) throw new Error("Cost unavailable. Enter the value of added or opening stock before saving this adjustment.");
+  const created = now(); const amount = moneyAmount(totalCost);
+  const record: import("@/types/farm").StockMovement = { id: movementId, ownerId: uid, accountId, itemId: item.id, date: input.date, type: "adjustment", quantity: input.quantity, unit: item.baseUnit, totalCost: amount, unitCost: amount / Math.abs(input.quantity), financialClassification: "consumable", source: input.openingBalance ? "opening_balance" : "stock_adjustment", reason: input.openingBalance ? "Opening stock balance" : "Inventory quantity correction", notes: input.notes, createdAt: created, updatedAt: created };
+  await commitLocalFarmChanges(uid, accountId, [{ collectionName: "stockMovements", id: movementId, record }]);
+  return movementId;
 }
 
 export async function recordStockConsumption(uid: string, accountId: string, input: { itemId: string; quantity: number; unit: string; date: string; batchId: string; idempotencyKey: string }): Promise<string> {
@@ -292,32 +366,11 @@ export async function recordStockConsumption(uid: string, accountId: string, inp
     getLocalFarmRecords<import("@/types/farm").Purchase>(uid, accountId, "purchases"),
     getLocalFarmRecords<import("@/types/farm").StockMovement>(uid, accountId, "stockMovements"),
   ]);
-  const received = movements.filter((movement) => movement.itemId === item.id && movement.type === "received");
-  const consumableReceived = received.filter((movement) => {
-    const purchase = purchases.find((entry) => entry.id === movement.purchaseId);
-    return (movement.financialClassification ?? purchase?.financialClassification ?? "consumable") === "consumable";
-  });
-  const consumableAdjustments = movements.filter((movement) => movement.itemId === item.id && movement.type === "adjustment" && movement.financialClassification === "consumable");
-  const onHand = consumableReceived.reduce((sum, movement) => sum + movement.quantity, 0)
-    + consumableAdjustments.reduce((sum, movement) => sum + movement.quantity, 0)
-    - movements.filter((movement) => movement.itemId === item.id && ["consumed", "sold", "wasted"].includes(movement.type) && movement.financialClassification === "consumable").reduce((sum, movement) => sum + movement.quantity, 0);
-  if (input.quantity > onHand) throw new Error(`Only ${Math.max(0, onHand)} ${item.baseUnit} are on hand.`);
-  const allocated = purchases.filter((purchase) => purchase.inventoryItemId === item.id && purchase.financialClassification === "consumable").flatMap((purchase) => purchase.allocations.filter((allocation) => allocation.batchId === input.batchId)).reduce((sum, allocation) => sum + (allocation.quantity ?? 0), 0)
-    - movements.filter((movement) => movement.itemId === item.id && movement.batchId === input.batchId && movement.type === "consumed" && movement.financialClassification === "consumable").reduce((sum, movement) => sum + movement.quantity, 0);
-  if (input.quantity > allocated) throw new Error(`Only ${Math.max(0, allocated)} ${item.baseUnit} are allocated to this batch.`);
-  const weightedReceipts = received.reduce((sum, movement) => {
-    const purchase = purchases.find((entry) => entry.id === movement.purchaseId);
-    const classification = movement.financialClassification ?? purchase?.financialClassification ?? "consumable";
-    return classification === "consumable" ? sum + (movement.totalCost ?? 0) : sum;
-  }, 0);
-  const weightedQuantity = received.reduce((sum, movement) => {
-    const purchase = purchases.find((entry) => entry.id === movement.purchaseId);
-    const classification = movement.financialClassification ?? purchase?.financialClassification ?? "consumable";
-    return classification === "consumable" ? sum + movement.quantity : sum;
-  }, 0);
-  if (weightedQuantity <= 0) throw new Error("No reliable consumable stock cost is available for this item.");
+  const batchStock = calculateBatchAllocatedStock(item.id, input.batchId, purchases, movements, item);
+  if (input.quantity > batchStock.quantity + 1e-9) throw new Error(`Only ${batchStock.quantity} ${item.baseUnit} are available in this batch allocation.`);
+  if (batchStock.averageUnitCost == null) throw new Error("Cost unavailable for this batch allocation. Review the original purchase before recording usage.");
   const created = now();
-  const record = { id: movementId, ownerId: uid, accountId, itemId: item.id, batchId: input.batchId, date: input.date, type: "consumed", quantity: input.quantity, unit: input.unit, totalCost: moneyAmount((weightedReceipts / weightedQuantity) * input.quantity), unitCost: moneyAmount(weightedReceipts / weightedQuantity), financialClassification: "consumable", source: "batch_usage", reason: "Recorded batch consumption", createdAt: created, updatedAt: created };
+  const record = { id: movementId, ownerId: uid, accountId, itemId: item.id, batchId: input.batchId, date: input.date, type: "consumed", quantity: input.quantity, unit: input.unit, totalCost: moneyAmount(batchStock.averageUnitCost * input.quantity), unitCost: batchStock.averageUnitCost, financialClassification: "consumable", source: "batch_usage", reason: "Recorded batch consumption", createdAt: created, updatedAt: created };
   await commitLocalFarmChanges(uid, accountId, [{ collectionName: "stockMovements", id: movementId, record }]);
   return movementId;
 }

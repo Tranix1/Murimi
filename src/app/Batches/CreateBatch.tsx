@@ -34,11 +34,11 @@ export default function CreateBatchScreen() {
   const [saveSupplier, setSaveSupplier] = useState(false);
   const [dateStarted, setDateStarted] = useState(localDate(new Date()));
   const [quantity, setQuantity] = useState("");
+  const [paidQuantity, setPaidQuantity] = useState("");
   const [costPerUnit, setCostPerUnit] = useState("");
   const [transportCost, setTransportCost] = useState("");
   const [setupCost, setSetupCost] = useState("");
   const [showOptionalCosts, setShowOptionalCosts] = useState(false);
-  const [location, setLocation] = useState("");
   const [duration, setDuration] = useState("");
   const [expectedSaleDate, setExpectedSaleDate] = useState("");
   const [targetWeight, setTargetWeight] = useState("");
@@ -79,6 +79,11 @@ export default function CreateBatchScreen() {
       setError("Costs and quantities must be zero or greater.");
       return;
     }
+    const paidBirds = optionalNumber(paidQuantity);
+    if (paidBirds !== undefined && (!Number.isInteger(paidBirds) || paidBirds < 0)) {
+      setError("Birds paid for must be a whole number, zero or greater.");
+      return;
+    }
     const optionalFields = [costPerUnit, duration, targetWeight, expectedPrice, plannedFeed, initialAverageWeight]
       .map(optionalNumber)
       .filter((value): value is number => value !== undefined);
@@ -97,11 +102,11 @@ export default function CreateBatchScreen() {
       supplier: supplier.trim() || undefined,
       dateStarted,
       initialQuantity,
+      paidQuantity: paidBirds ?? initialQuantity,
       costPerUnit: optionalNumber(costPerUnit),
       initialAverageWeightKg,
       transportCost: transportCost.trim() ? Number(transportCost) : 0,
       setupCost: setupCost.trim() ? Number(setupCost) : 0,
-      location: location.trim() || undefined,
       expectedDurationDays: optionalNumber(duration),
       expectedSaleDate: expectedSaleDate.trim() || undefined,
       targetLiveWeightKg: optionalNumber(targetWeight),
@@ -163,8 +168,7 @@ export default function CreateBatchScreen() {
         <FarmDatePicker label="Arrival / start date" value={dateStarted} onChange={setDateStarted} />
         <FarmField label="Initial birds placed" value={quantity} onChangeText={setQuantity} keyboardType="number-pad" placeholder="Required" />
         <TouchableOpacity onPress={() => setShowOptionalCosts(!showOptionalCosts)} style={[styles.optionalToggle, { borderColor: border, backgroundColor: surface }]}><ThemedText type="defaultSemiBold" color={accent}>{showOptionalCosts ? "− Hide optional initial costs" : "+ Add initial costs (optional)"}</ThemedText></TouchableOpacity>
-        {showOptionalCosts && <><FarmField label="Cost per chick (optional)" value={costPerUnit} onChangeText={setCostPerUnit} keyboardType="decimal-pad" placeholder="0.00" /><FarmField label="Transport cost (optional)" value={transportCost} onChangeText={setTransportCost} keyboardType="decimal-pad" placeholder="0.00" /><FarmField label="Initial setup costs (optional)" value={setupCost} onChangeText={setSetupCost} keyboardType="decimal-pad" placeholder="0.00" /></>}
-        <FarmField label="Location (optional)" value={location} onChangeText={setLocation} placeholder="House or production area" />
+        {showOptionalCosts && <><FarmField label="Birds paid for (optional)" value={paidQuantity} onChangeText={setPaidQuantity} keyboardType="number-pad" placeholder="Leave blank if same as birds placed" /><ThemedText type="tiny" color={muted}>Use this when you received extra birds that were not charged. Chick cost is based on birds paid for, not birds placed.</ThemedText><FarmField label="Cost per chick (optional)" value={costPerUnit} onChangeText={setCostPerUnit} keyboardType="decimal-pad" placeholder="0.00" /><FarmField label="Transport cost (optional)" value={transportCost} onChangeText={setTransportCost} keyboardType="decimal-pad" placeholder="0.00" /><FarmField label="Initial setup costs (optional)" value={setupCost} onChangeText={setSetupCost} keyboardType="decimal-pad" placeholder="0.00" /></>}
         <FarmField label="Expected duration in days (optional)" value={duration} onChangeText={setDuration} keyboardType="number-pad" placeholder="For planning" />
         <FarmDatePicker label="Expected sale date (optional)" value={expectedSaleDate} onChange={setExpectedSaleDate} />
         <FarmField label="Target live weight in kg (optional)" value={targetWeight} onChangeText={setTargetWeight} keyboardType="decimal-pad" placeholder="0.00" />

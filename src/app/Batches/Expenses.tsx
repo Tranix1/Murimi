@@ -10,16 +10,14 @@ import { saveExpense } from "@/services/farmRepository";
 import type { ExpenseCategory } from "@/types/farm";
 
 const categories: { value: ExpenseCategory; label: string }[] = [
-  { value: "feed", label: "Feed" }, { value: "medicine", label: "Medicine" }, { value: "bedding", label: "Bedding" },
-  { value: "heating", label: "Heating" }, { value: "utilities", label: "Utilities" }, { value: "labour", label: "Labour" },
-  { value: "processing", label: "Processing" }, { value: "packaging", label: "Packaging" }, { value: "delivery", label: "Delivery" },
+  { value: "utilities", label: "Utilities" }, { value: "labour", label: "Labour" }, { value: "delivery", label: "Delivery" },
   { value: "maintenance", label: "Maintenance" }, { value: "other", label: "Other" },
 ];
 
 export default function BatchExpenseScreen() {
   const { batchId } = useLocalSearchParams<{ batchId?: string }>();
   const { user, activeAccountId } = useAuth();
-  const [category, setCategory] = useState<ExpenseCategory>("feed");
+  const [category, setCategory] = useState<ExpenseCategory>("labour");
   const [description, setDescription] = useState("");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [amount, setAmount] = useState("");

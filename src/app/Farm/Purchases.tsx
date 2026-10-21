@@ -11,16 +11,15 @@ import { useMemo, useState } from "react";
 import { ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from "react-native";
 
 export default function PurchasesScreen() {
-  const { records, isLoading } = useFarmRecords<Purchase>("purchases");
+  const { records, isLoading, error } = useFarmRecords<Purchase>("purchases");
   const [search, setSearch] = useState("");
   const accent = useThemeColor("accent"); const muted = useThemeColor("textlight"); const text = useThemeColor("text"); const surface = useThemeColor("backgroundLight"); const border = useThemeColor("border");
   const visible = useMemo(() => records.filter((r) => `${r.itemName} ${r.category} ${r.supplier ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())), [records, search]);
   return <ScreenWrapper fh={false}><CustomHeader pageTitle="Purchases" addingNavigate="/Farm/RecordPurchase" />
-    <View style={[styles.search, { borderColor: border }]}><Ionicons name="search-outline" size={18} color={muted} /><TextInput value={search} onChangeText={setSearch} placeholder="Search purchases" placeholderTextColor={muted} style={{ flex: 1, color: text }} /></View>
-    <ScrollView contentContainerStyle={styles.list}>
+    <View style={[styles.search, { borderColor: border }]}><Ionicons name="search-outline" size={18} color={muted} /><TextInput value={search} onChangeText={setSearch} placeholder="Search purchases" placeholderTextColor={muted} style={{ flex: 1, color: text }} /></View><ScrollView contentContainerStyle={styles.list}>{error ? <ThemedText type="tiny" color={muted}>{error}</ThemedText> : null}{isLoading ? <ThemedText type="tiny" color={muted}>Loading purchases…</ThemedText> : null}
       {!isLoading && !visible.length ? <FarmEmpty title="No purchases recorded" message="Purchases you record offline will appear here and sync when connected." icon="cart-outline" /> : visible.map((purchase) => <TouchableOpacity key={purchase.id} onPress={() => router.push({ pathname: "/Farm/PurchaseDetails" as never, params: { purchaseId: purchase.id } })} style={[styles.card, { backgroundColor: surface, borderColor: border }]}>
-        <View style={styles.row}><View style={{ flex: 1 }}><ThemedText type="defaultSemiBold" color={text}>{purchase.itemName}</ThemedText><ThemedText type="tiny" color={muted}>{purchase.categoryNameSnapshot ?? purchase.category} · {purchase.date}{purchase.quantity != null ? ` · ${purchase.quantity} ${purchase.unit ?? "units"}` : ""}</ThemedText></View><ThemedText type="defaultSemiBold" color={accent}>{money(purchase.totalCost)}</ThemedText></View>
-        <ThemedText type="tiny" color={muted}>{purchase.receiptStatus === "ordered" ? "Ordered · not received" : "Received"} · Paid {money(purchase.amountPaid ?? 0)} · Outstanding {money(purchase.outstanding ?? 0)}</ThemedText>
+        <View style={styles.row}><View style={{ flex: 1 }}><ThemedText type="defaultSemiBold" color={text}>{purchase.categoryNameSnapshot ?? purchase.category.replaceAll("_", " ")} {" · "} {purchase.itemName}</ThemedText><ThemedText type="tiny" color={muted}>{purchase.date}{purchase.quantity != null ? ` · ${purchase.quantity} ${purchase.unit ?? "units"}` : ""}</ThemedText></View><ThemedText type="defaultSemiBold" color={accent}>{money(purchase.totalCost)}</ThemedText></View>
+        <ThemedText type="tiny" color={muted}>{purchase.receiptStatus === "ordered" ? "Ordered / not received" : "Received"} · Paid {money(purchase.amountPaid ?? 0)} · Outstanding {money(purchase.outstanding ?? 0)}</ThemedText>
         <ThemedText type="tiny" color={muted}>{purchase.allocations.length ? `${purchase.allocations.length} batch allocation${purchase.allocations.length === 1 ? "" : "s"}` : "General farm stock"} · {purchase.unallocatedQuantity ?? 0} {purchase.unit ?? "units"} unallocated</ThemedText>
       </TouchableOpacity>)}
     </ScrollView>

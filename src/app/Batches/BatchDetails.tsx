@@ -4,7 +4,7 @@ import { FarmEmpty } from "@/components/farm/FarmComponents";
 import { useFarmRecords } from "@/hooks/useFarmRecords";
 import { useThemeColor } from "@/hooks/useThemeColor";
 import { updateFarmRecord } from "@/services/farmRepository";
-import type { Batch, BatchProblem, DailyRecord, Expense, MortalityRecord, Purchase, Sale, SlaughterRecord, StockMovement, WeightMeasurement } from "@/types/farm";
+import type { Batch, BatchProblem, DailyRecord, Expense, InventoryItem, MortalityRecord, Purchase, Sale, SlaughterRecord, StockMovement, WeightMeasurement } from "@/types/farm";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
@@ -17,6 +17,7 @@ export default function BatchDetailsScreen() {
   const { records: expenses } = useFarmRecords<Expense>("expenses");
   const { records: purchases } = useFarmRecords<Purchase>("purchases");
   const { records: stockMovements } = useFarmRecords<StockMovement>("stockMovements");
+  const { records: inventoryItems } = useFarmRecords<InventoryItem>("stock");
   const { records: sales } = useFarmRecords<Sale>("sales");
   const { records: weights } = useFarmRecords<WeightMeasurement>("weights");
   const { records: slaughter } = useFarmRecords<SlaughterRecord>("slaughter");
@@ -41,6 +42,7 @@ export default function BatchDetailsScreen() {
   const batchMortality = mortalityRecords.filter((record) => record.batchId === batch.id).sort((a, b) => b.date.localeCompare(a.date));
   const batchProblems = problems.filter((record) => record.batchId === batch.id).sort((a, b) => b.date.localeCompare(a.date));
   const batchPurchases = purchases.filter((purchase) => purchase.allocations.some((allocation) => allocation.batchId === batch.id));
+  const batchStockEvents = stockMovements.filter((movement) => movement.batchId === batch.id && ["allocated", "consumed", "wasted", "returned"].includes(movement.type)).sort((a, b) => b.date.localeCompare(a.date));
   const summary = calculateBatchSummary(batch, batchDaily, batchExpenses, batchSales, batchWeights, batchSlaughter, purchases, stockMovements);
   const mortalityAnalytics = calculateMortalityAnalytics(batchMortality, batch.initialQuantity);
 
@@ -98,7 +100,7 @@ export default function BatchDetailsScreen() {
           {batch.supplier ? <Metric label="Supplier" value={batch.supplier} /> : null}
           {batch.supplierId ? <Metric label="Supplier ID" value={batch.supplierId} /> : null}
           <Metric label="Birds sold" value={summary.birdsSold.toLocaleString()} />
-          <Metric label="Recorded costs" value={money(summary.costsIncurred)} />
+          <Metric label="Recorded costs" value={summary.costsReliable === false ? `${money(summary.costsIncurred)} · Cost unavailable for some stock` : money(summary.costsIncurred)} />
           <Metric label="Cost per live bird" value={moneyOrDash(summary.costPerLiveBird)} />
           <Metric label="Feed consumed" value={`${summary.feedKg.toFixed(1)} kg (${summary.feedBags50Kg.toFixed(1)} bags)`} />
           <Metric label="Average live weight" value={weight(summary.averageLiveWeightKg)} />
@@ -132,6 +134,10 @@ export default function BatchDetailsScreen() {
         <View style={styles.sectionHeader}><SectionTitle title="Purchases" /><ThemedText type="tiny" color={muted}>{batchPurchases.length} entries</ThemedText></View>
         {batchPurchases.slice(0, 5).map((purchase) => <View key={purchase.id} style={[styles.record, { backgroundColor: surface, borderColor: border }]}><ThemedText type="defaultSemiBold">{purchase.itemName}</ThemedText><ThemedText type="tiny" color={muted}>{purchase.date} · {purchase.category} · {money(purchase.totalCost)}</ThemedText></View>)}
         {!batchPurchases.length && <ThemedText type="tiny" color={muted} style={styles.emptyHint}>No purchases allocated to this batch.</ThemedText>}
+
+        <View style={styles.sectionHeader}><SectionTitle title="Inventory issued and used" /><ThemedText type="tiny" color={muted}>{batchStockEvents.length} movements</ThemedText></View>
+        {batchStockEvents.slice(0, 10).map((movement) => <View key={movement.id} style={[styles.record, { backgroundColor: surface, borderColor: border }]}><ThemedText type="defaultSemiBold">{inventoryItems.find((item) => item.id === movement.itemId)?.name ?? "Inventory item"} · {movement.type.replaceAll("_", " ")}</ThemedText><ThemedText type="tiny" color={muted}>{movement.date} · {movement.quantity} {movement.unit} · {movement.totalCost == null ? "Cost unavailable" : money(movement.totalCost)}</ThemedText></View>)}
+        {!batchStockEvents.length && <ThemedText type="tiny" color={muted} style={styles.emptyHint}>No stock issued or used for this batch.</ThemedText>}
 
         <View style={styles.sectionHeader}><SectionTitle title="Expenses and feed" /><ThemedText type="tiny" color={muted}>{batchExpenses.length} entries</ThemedText></View>
         {batchExpenses.slice(0, 5).map((expense) => <View key={expense.id} style={[styles.record, { backgroundColor: surface, borderColor: border }]}><ThemedText type="defaultSemiBold">{expense.description}</ThemedText><ThemedText type="tiny" color={muted}>{expense.date} · {expense.category.replace("_", " ")} · {money(expense.amount)}</ThemedText></View>)}

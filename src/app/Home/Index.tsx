@@ -1,4 +1,4 @@
-import { calculateBatchSummary, calculateFinanceSummary } from "@/Utilities/farmCalculations";
+import { calculateBatchSummary, calculateFinanceSummary, purchaseBackedAssets } from "@/Utilities/farmCalculations";
 import { calculateInventoryBalances } from "@/Utilities/inventoryCalculations";
 import CustomHeader from "@/components/CustomHeader";
 import ScreenWrapper from "@/components/ScreenWrapper";
@@ -44,7 +44,7 @@ export default function Home() {
       slaughter.filter((entry) => entry.batchId === batch.id), purchases, stockMovements),
   }));
   const inventory = calculateInventoryBalances(inventoryItems, purchases, stockMovements);
-  const finance = calculateFinanceSummary({ transactions, sales, expenses, purchases, assets, inventoryValue: inventory.totalValue, stockMovements });
+  const finance = calculateFinanceSummary({ transactions, sales, expenses, purchases, assets: purchaseBackedAssets(purchases, assets), inventoryValue: inventory.totalValue, stockMovements });
   const totalAlive = batchSummaries.reduce((sum, item) => sum + item.summary.birdsAlive, 0);
   const today = new Date().toISOString().slice(0, 10);
   const upcoming = plans.filter((plan) => plan.status !== "completed" && plan.status !== "cancelled" && plan.plannedDate >= today).sort((a, b) => a.plannedDate.localeCompare(b.plannedDate)).slice(0, 3);
@@ -92,7 +92,7 @@ export default function Home() {
         ) : batchSummaries.slice(0, 4).map(({ batch, summary }) => (
           <TouchableOpacity key={batch.id} activeOpacity={0.8} onPress={() => router.push({ pathname: "/Batches/BatchDetails" as never, params: { batchId: batch.id } })} style={[styles.batchCard, { backgroundColor: surface, borderColor: border }]}>
             <View style={[styles.batchIcon, { backgroundColor: `${accent}18` }]}><Ionicons name="leaf-outline" size={20} color={accent} /></View>
-            <View style={styles.flex}><ThemedText type="defaultSemiBold" color={text}>{batch.batchNumber ? `Batch ${batch.batchNumber}` : batch.name}</ThemedText><ThemedText type="tiny" color={muted}>{batch.enterprise} · {batch.stockType} · {summary.birdsAlive.toLocaleString()} alive</ThemedText></View>
+            <View style={styles.flex}><ThemedText type="defaultSemiBold" color={text}>{batch.name} · Batch {batch.batchNumber ?? batch.id}</ThemedText><ThemedText type="tiny" color={muted}>{batch.enterprise} · {batch.stockType} · {summary.birdsAlive.toLocaleString()} alive</ThemedText></View>
             <View style={styles.batchEnd}><ThemedText type="tiny" color={accent}>{batch.status.replace("_", " ")}</ThemedText><Ionicons name="chevron-forward" size={16} color={muted} /></View>
           </TouchableOpacity>
         ))}

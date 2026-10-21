@@ -61,9 +61,32 @@ export function calculateBatchSummary(
   const processingCosts = slaughterRecords.reduce((sum, record) => sum + Math.max(0, record.processingCost) + Math.max(0, record.packagingCost), 0);
   const deliveryCosts = sales.reduce((sum, sale) => sum + Math.max(0, sale.deliveryCost), 0);
   const baseCosts = (batch.historical ? Math.max(0, historical?.chicksCost ?? 0) : batch.initialQuantity * Math.max(0, batch.costPerUnit ?? 0)) + Math.max(0, batch.transportCost) + Math.max(0, batch.setupCost);
-  const allocatedPurchases = purchases.reduce((sum, purchase) => sum + purchase.allocations.filter((allocation) => allocation.batchId === batch.id).reduce((subtotal, allocation) => subtotal + Math.max(0, allocation.cost ?? 0), 0), 0);
-  const consumedStockCosts = stockMovements.filter((movement) => movement.batchId === batch.id && movement.type === "consumed" && movement.financialClassification !== "fixed_asset").reduce((sum, movement) => sum + Math.max(0, movement.totalCost ?? 0), 0);
-  const costsIncurred = baseCosts + operatingExpenses + allocatedPurchases + consumedStockCosts + processingCosts + deliveryCosts;
+  const batchIssues = stockMovements.filter((movement) => movement.batchId === batch.id && movement.type === "allocated");
+  const issueKeys = new Set(batchIssues.filter((movement) => movement.purchaseId).map((movement) => `${movement.purchaseId}:${movement.batchId}`));
+  let issuedStockCosts = 0; let costsReliable = true;
+  const purchaseQuantity = (purchase: Purchase) => purchase.quantity ?? (purchase.itemCount != null && purchase.amountPerItem != null ? purchase.itemCount * purchase.amountPerItem : purchase.itemCount);
+  const purchaseCost = (purchase: Purchase) => Number.isFinite(purchase.totalCost) && purchase.totalCost >= 0 ? purchase.totalCost : purchase.itemCount != null && purchase.pricePerItem != null ? purchase.itemCount * purchase.pricePerItem : undefined;
+  for (const movement of batchIssues) {
+    const purchase = purchases.find((entry) => entry.id === movement.purchaseId);
+    const allocation = purchase?.allocations.find((entry) => entry.batchId === batch.id);
+    const quantity = purchase ? purchaseQuantity(purchase) : null;
+    const cost = movement.totalCost ?? (movement.unitCost != null ? movement.unitCost * movement.quantity : undefined)
+      ?? allocation?.cost ?? (quantity && purchase && purchaseCost(purchase) != null ? purchaseCost(purchase)! * movement.quantity / quantity : undefined);
+    if (cost == null) costsReliable = false; else issuedStockCosts += Math.max(0, cost);
+  }
+  for (const purchase of purchases) for (const allocation of purchase.allocations.filter((entry) => entry.batchId === batch.id && !issueKeys.has(`${purchase.id}:${entry.batchId}`))) {
+    const quantity = purchaseQuantity(purchase);
+    const cost = allocation.cost ?? (quantity && purchaseCost(purchase) != null ? purchaseCost(purchase)! * (allocation.quantity ?? quantity) / quantity : undefined);
+    if (cost == null) costsReliable = false; else issuedStockCosts += Math.max(0, cost);
+  }
+  const returnedStockCosts = stockMovements.filter((movement) => movement.batchId === batch.id && movement.type === "returned")
+    .reduce((sum, movement) => { const cost = movement.totalCost ?? (movement.unitCost != null ? movement.unitCost * movement.quantity : undefined); if (cost == null) { costsReliable = false; return sum; } return sum + Math.max(0, cost); }, 0);
+  const coveredItems = new Set(batchIssues.map((movement) => movement.itemId));
+  for (const purchase of purchases.filter((entry) => entry.allocations.some((allocation) => allocation.batchId === batch.id) && entry.inventoryItemId)) coveredItems.add(purchase.inventoryItemId!);
+  const legacyUnallocatedConsumption = stockMovements.filter((movement) => movement.batchId === batch.id && movement.type === "consumed" && !coveredItems.has(movement.itemId));
+  const consumptionFallbackCosts = legacyUnallocatedConsumption.reduce((sum, movement) => { const cost = movement.totalCost ?? (movement.unitCost != null ? movement.unitCost * movement.quantity : undefined); if (cost == null) { costsReliable = false; return sum; } return sum + Math.max(0, cost); }, 0);
+  const consumedStockCosts = Math.max(0, issuedStockCosts - returnedStockCosts) + consumptionFallbackCosts;
+  const costsIncurred = baseCosts + operatingExpenses + consumedStockCosts + processingCosts + deliveryCosts;
   const revenue = sales.reduce((sum, sale) => sum + Math.max(0, sale.totalValue), 0) + (batch.historical ? Math.max(0, historical?.revenue ?? 0) : 0);
   const cashCollected = sales.reduce((sum, sale) => sum + Math.max(0, sale.paymentReceived), 0) + (batch.historical ? Math.max(0, historical?.amountPaid ?? 0) : 0);
   const receivables = sales.reduce((sum, sale) => sum + Math.max(0, sale.outstanding), 0) + (batch.historical ? Math.max(0, historical?.outstanding ?? 0) : 0);
@@ -96,6 +119,7 @@ export function calculateBatchSummary(
     mortalityPercent,
     birdsSold,
     costsIncurred,
+    costsReliable,
     feedKg,
     feedBags50Kg: feedKg / 50,
     averageLiveWeightKg,
@@ -172,4 +196,11 @@ export function calculateFinanceSummary(input: {
     expenses,
     realizedProfit: revenue - expenses,
   };
+}
+
+/** Fixed asset values entered through Record Purchase are the canonical asset register. */
+export function purchaseBackedAssets(purchases: Purchase[], assets: { purchaseId?: string; estimatedValue: number }[]) {
+  const linkedValues = new Map(assets.filter((asset) => asset.purchaseId).map((asset) => [asset.purchaseId!, asset.estimatedValue]));
+  return purchases.filter((purchase) => purchase.financialClassification === "fixed_asset" || linkedValues.has(purchase.id))
+    .map((purchase) => ({ estimatedValue: linkedValues.get(purchase.id) ?? purchase.totalCost }));
 }
