@@ -45,6 +45,7 @@ export default function FinancesScreen() {
     <Action title="Record cash movement" caption="Opening balance or other receipt/payment" icon="swap-vertical-outline" onPress={() => go("/Finances/Transaction")} />
     <Action title="Fixed assets" caption="View and add farm equipment or property" icon="business-outline" onPress={() => go("/Assets/Index")} />
     <Action title="Reports & Export" caption="Filter financial records and export reports" icon="bar-chart-outline" onPress={() => go("/Reports/Index")} />
+    <Action title="Connect another app" caption="Share read-only financial data securely" icon="share-social-outline" onPress={() => go("/Integrations/Index")} />
   </ScrollView></ScreenWrapper>;
 }
 function Line({ label, value }: { label: string; value: string }) { const muted = useThemeColor("textlight"); const text = useThemeColor("text"); return <View style={styles.line}><ThemedText type="tiny" color={muted}>{label}</ThemedText><ThemedText type="defaultSemiBold" color={text}>{value}</ThemedText></View>; }

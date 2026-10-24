@@ -288,15 +288,19 @@ export type StockMovement = FarmRecord & {
 export type Sale = FarmRecord & {
   batchId: string;
   date: string;
-  productType: "live_birds" | "dressed_birds";
+  /** Built-in values remain stable; custom product types use their catalogue record ID. */
+  productType: "live_birds" | "dressed_birds" | (string & {});
   productDescription?: string;
   quantity: number;
-  unit: "birds" | "kg";
+  unit: string;
   pricePerUnit: number;
   totalValue: number;
   paymentReceived: number;
   outstanding: number;
-  paymentStatus?: "paid" | "partially_paid" | "unpaid";
+  badDebtAmount?: number;
+  badDebtDate?: string;
+  badDebtReason?: string;
+  paymentStatus?: "paid" | "partially_paid" | "unpaid" | "written_off";
   customer?: string;
   customerId?: string;
   customerCategoryId?: string;
@@ -312,6 +316,7 @@ export type Sale = FarmRecord & {
 
 export type CustomerCategory = FarmRecord & { name: string; active: boolean };
 export type FarmCustomer = FarmRecord & { name: string; categoryId: string; phone?: string; location?: string; notes?: string; active: boolean; categoryIds?: string[] };
+export type SaleProductType = FarmRecord & { name: string; unit: string; active: boolean; archivedAt?: string };
 export type FarmPaymentMethod = FarmRecord & { name: string; active: boolean; systemDefault?: boolean };
 
 export type SalePayment = FarmRecord & {
@@ -359,21 +364,34 @@ export type FarmAsset = FarmRecord & {
   residualValue?: number;
   accumulatedDepreciation?: number;
   inServiceDate?: string;
-  status?: "active" | "disposed" | "retired";
+  status?: "active" | "in_use" | "not_in_use" | "sold" | "removed" | "disposed" | "retired";
+  statusChangedAt?: string;
+  disposalDate?: string;
+  disposalProceeds?: number;
   notes?: string;
 };
 
 export type FarmPlan = FarmRecord & {
   name: string;
-  category: "feed" | "medicine" | "batch" | "equipment" | "construction" | "payment" | "sale" | "other";
+  category: string;
+  purpose?: "spend" | "earn";
   amount: number;
   plannedDate: string;
   relatedBatchId?: string;
+  farmRelated?: boolean;
+  items?: { id: string; name: string; quantity: number; unit: string; unitPrice: number; purchasedQuantity: number; actualAmount: number }[];
+  amountAllocated?: number;
+  alertAtAmount?: number;
+  targetProfit?: number;
+  recoveredAmount?: number;
+  closedAt?: string;
   priority: "low" | "normal" | "high";
   status: "planned" | "committed" | "partially_completed" | "completed" | "cancelled";
   actualAmount: number;
   notes?: string;
 };
+
+export type FarmPlanCategory = FarmRecord & { name: string; purpose?: "spend" | "earn"; active: boolean };
 
 export type FinancialTransaction = FarmRecord & {
   date: string;

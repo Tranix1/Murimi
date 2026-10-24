@@ -38,6 +38,38 @@ export function average(values: number[]): number | null {
   return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
 }
 
+/** Flock age is counted inclusively, so the placement date is Day 1. */
+export function calculateBatchAgeDays(startDate: string, today = new Date()): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) return null;
+  const [year, month, day] = startDate.split("-").map(Number);
+  const start = Date.UTC(year, month - 1, day);
+  const current = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  if (!Number.isFinite(start) || !Number.isFinite(current)) return null;
+  return Math.max(0, Math.floor((current - start) / 86400000) + 1);
+}
+
+/** Feed recommendation: days 1-14 starter, 15-27 grower, and day 28 onward finisher. */
+export function broilerFeedStageForAge(ageDays: number): "starter" | "grower" | "finisher" | null {
+  if (!Number.isFinite(ageDays) || ageDays < 1) return null;
+  if (ageDays <= 14) return "starter";
+  if (ageDays <= 27) return "grower";
+  return "finisher";
+}
+
+export type BatchProductionStage = "starter" | "growing" | "finishing" | "ready_to_sell";
+
+export function batchProductionStageForAge(ageDays: number): BatchProductionStage | null {
+  if (!Number.isFinite(ageDays) || ageDays < 1) return null;
+  if (ageDays <= 14) return "starter";
+  if (ageDays <= 27) return "growing";
+  if (ageDays <= 35) return "finishing";
+  return "ready_to_sell";
+}
+
+export function batchProductionStageLabel(stage: BatchProductionStage): string {
+  return ({ starter: "Starter", growing: "Growing", finishing: "Finishing", ready_to_sell: "Ready to sell" })[stage];
+}
+
 export function calculateBatchSummary(
   batch: Batch,
   dailyRecords: DailyRecord[],
@@ -57,10 +89,11 @@ export function calculateBatchSummary(
   const slaughtered = slaughterRecords.reduce((sum, record) => sum + record.quantitySlaughtered, 0);
   const birdsAlive = batch.historical ? historical?.birdsRemaining ?? 0 : Math.max(0, batch.initialQuantity + additions - deaths - removals - birdsSold - slaughtered);
   const feedKg = dailyRecords.reduce((sum, record) => sum + Math.max(0, record.feedKg ?? 0), 0) + (batch.historical ? Math.max(0, historical?.feedConsumedKg ?? 0) : 0);
-  const operatingExpenses = expenses.reduce((sum, expense) => sum + Math.max(0, expense.amount), 0) + (batch.historical ? Math.max(0, historical?.otherOperatingCosts ?? 0) : 0) + (batch.historical ? Math.max(0, historical?.feedCost ?? 0) : 0);
+  const badDebtLosses = sales.reduce((sum, sale) => sum + Math.max(0, sale.badDebtAmount ?? 0), 0);
+  const operatingExpenses = expenses.reduce((sum, expense) => sum + Math.max(0, expense.amount), 0) + badDebtLosses + (batch.historical ? Math.max(0, historical?.otherOperatingCosts ?? 0) : 0) + (batch.historical ? Math.max(0, historical?.feedCost ?? 0) : 0);
   const processingCosts = slaughterRecords.reduce((sum, record) => sum + Math.max(0, record.processingCost) + Math.max(0, record.packagingCost), 0);
   const deliveryCosts = sales.reduce((sum, sale) => sum + Math.max(0, sale.deliveryCost), 0);
-  const baseCosts = (batch.historical ? Math.max(0, historical?.chicksCost ?? 0) : batch.initialQuantity * Math.max(0, batch.costPerUnit ?? 0)) + Math.max(0, batch.transportCost) + Math.max(0, batch.setupCost);
+  const baseCosts = (batch.historical ? Math.max(0, historical?.chicksCost ?? 0) : (batch.paidQuantity ?? batch.initialQuantity) * Math.max(0, batch.costPerUnit ?? 0)) + Math.max(0, batch.transportCost) + Math.max(0, batch.setupCost);
   const batchIssues = stockMovements.filter((movement) => movement.batchId === batch.id && movement.type === "allocated");
   const issueKeys = new Set(batchIssues.filter((movement) => movement.purchaseId).map((movement) => `${movement.purchaseId}:${movement.batchId}`));
   let issuedStockCosts = 0; let costsReliable = true;
@@ -176,6 +209,7 @@ export function calculateFinanceSummary(input: {
   const totalLiabilities = payables;
   const revenue = input.sales.reduce((sum, sale) => sum + Math.max(0, sale.totalValue), 0);
   const expenses = input.expenses.reduce((sum, expense) => sum + Math.max(0, expense.amount), 0)
+    + input.sales.reduce((sum, sale) => sum + Math.max(0, sale.badDebtAmount ?? 0), 0)
     + (input.purchases ?? []).filter((purchase) => purchase.financialClassification == null || purchase.financialClassification === "operating_expense" || (purchase.financialClassification === "consumable" && purchase.inventoryTracked === false))
       .reduce((sum, purchase) => sum + Math.max(0, purchase.totalCost), 0)
     + (input.stockMovements ?? []).filter((movement) => movement.type === "consumed" && movement.financialClassification !== "fixed_asset")
@@ -199,8 +233,9 @@ export function calculateFinanceSummary(input: {
 }
 
 /** Fixed asset values entered through Record Purchase are the canonical asset register. */
-export function purchaseBackedAssets(purchases: Purchase[], assets: { purchaseId?: string; estimatedValue: number }[]) {
-  const linkedValues = new Map(assets.filter((asset) => asset.purchaseId).map((asset) => [asset.purchaseId!, asset.estimatedValue]));
+export function purchaseBackedAssets(purchases: Purchase[], assets: { purchaseId?: string; estimatedValue: number; status?: string }[]) {
+  const linkedValues = new Map(assets.filter((asset) => asset.purchaseId && asset.status !== "sold" && asset.status !== "removed" && asset.status !== "disposed").map((asset) => [asset.purchaseId!, asset.estimatedValue]));
   return purchases.filter((purchase) => purchase.financialClassification === "fixed_asset" || linkedValues.has(purchase.id))
+    .filter((purchase) => !assets.some((asset) => asset.purchaseId === purchase.id && ["sold", "removed", "disposed"].includes(asset.status ?? "")))
     .map((purchase) => ({ estimatedValue: linkedValues.get(purchase.id) ?? purchase.totalCost }));
 }

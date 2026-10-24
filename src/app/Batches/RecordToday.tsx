@@ -9,10 +9,11 @@ import { useThemeColor } from "@/hooks/useThemeColor";
 import { useAuth } from "@/context/AuthContext";
 import { useFarmRecords } from "@/hooks/useFarmRecords";
 import { saveDailyRecord } from "@/services/farmRepository";
+import { broilerFeedStageForAge } from "@/Utilities/farmCalculations";
 import type { Batch, DailyRecord, DeathCause } from "@/types/farm";
 
 type CauseInput = { quantity: string; cause: string; symptoms: string; actionTaken: string };
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => { const date = new Date(); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; };
 
 export default function RecordTodayScreen() {
   const { batchId } = useLocalSearchParams<{ batchId?: string }>();
@@ -37,6 +38,8 @@ export default function RecordTodayScreen() {
   const muted = useThemeColor("textlight");
   const bad = useThemeColor("bad");
   const batch = batches.find((item) => item.id === batchId);
+  const birdAgeDays = batch ? Math.floor((new Date(`${date}T00:00:00`).getTime() - new Date(`${batch.dateStarted}T00:00:00`).getTime()) / 86400000) + 1 : null;
+  const recommendedFeedStage = batch?.enterprise === "broiler" && birdAgeDays != null ? broilerFeedStageForAge(birdAgeDays) : null;
 
   const existing = records.find((record) => record.batchId === batchId && record.date === date);
   const openingCount = useMemo(() => {
@@ -84,7 +87,7 @@ export default function RecordTodayScreen() {
         deathCauses,
         removals: Number(removals),
         additions: Number(additions),
-        feedType: feedType.trim() || undefined,
+        feedType: feedType.trim() || (batch.enterprise === "broiler" ? recommendedFeedStage ?? undefined : undefined),
         feedKg: feedKg ? Number(feedKg) : undefined,
         waterLitres: waterLitres ? Number(waterLitres) : undefined,
         temperatureC: temperature ? Number(temperature) : undefined,
@@ -130,7 +133,8 @@ export default function RecordTodayScreen() {
         ))}
         <FarmField label="Other removals" value={removals} onChangeText={setRemovals} keyboardType="number-pad" placeholder="0" />
         <FarmField label="Additions / transfers in" value={additions} onChangeText={setAdditions} keyboardType="number-pad" placeholder="0" />
-        <FarmField label="Feed type (optional)" value={feedType} onChangeText={setFeedType} placeholder="Starter, grower, finisher…" />
+        {batch?.enterprise === "broiler" ? <><ThemedText type="tiny" color={muted}>Broiler age: {birdAgeDays != null && birdAgeDays > 0 ? `${birdAgeDays} days` : "check start date"} · Suggested stage: {recommendedFeedStage ?? "unavailable"}</ThemedText><View style={styles.choices}>{(["starter", "grower", "finisher"] as const).map((stage) => <TouchableOpacity key={stage} onPress={() => setFeedType(stage)} style={[styles.choice, { backgroundColor: feedType.toLowerCase() === stage ? `${accent}20` : surface, borderColor: feedType.toLowerCase() === stage ? accent : border }]}><ThemedText type="tiny" color={feedType.toLowerCase() === stage ? accent : muted}>{stage[0].toUpperCase() + stage.slice(1)}{recommendedFeedStage === stage ? " · suggested" : ""}</ThemedText></TouchableOpacity>)}</View></> : null}
+        <FarmField label="Feed type or stage (optional)" value={feedType} onChangeText={setFeedType} placeholder="Starter, grower, finisher or other feed" />
         <FarmField label="Feed consumed in kg (optional)" value={feedKg} onChangeText={setFeedKg} keyboardType="decimal-pad" placeholder="0" />
         <FarmField label="Water consumed in litres (optional)" value={waterLitres} onChangeText={setWaterLitres} keyboardType="decimal-pad" placeholder="0" />
         <FarmField label="Temperature °C (optional)" value={temperature} onChangeText={setTemperature} keyboardType="decimal-pad" placeholder="Measured value" />
@@ -150,4 +154,6 @@ const styles = StyleSheet.create({
   addCause: { borderRadius: 18, paddingHorizontal: 11, paddingVertical: 7 },
   addCauseText: { fontWeight: "700" },
   causeCard: { borderWidth: 1, borderRadius: 14, padding: 12, gap: 12 },
+  choices: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
+  choice: { borderWidth: 1, borderRadius: 18, paddingHorizontal: 11, paddingVertical: 8 },
 });

@@ -4,7 +4,7 @@ import "./inventoryCosting.test.mjs";
 import * as XLSX from "xlsx";
 import { buildCategoryCsvFiles, filterReportRecords, recordsToCsv, selectReportCategories } from "../src/services/reportingUtils.ts";
 import { createXlsxWorkbook } from "../src/services/spreadsheetExport.ts";
-import { calculateFinanceSummary, calculateMortalityAnalytics } from "../src/Utilities/farmCalculations.ts";
+import { broilerFeedStageForAge, calculateFinanceSummary, calculateMortalityAnalytics } from "../src/Utilities/farmCalculations.ts";
 import { calculateInventoryBalances } from "../src/Utilities/inventoryCalculations.ts";
 
 test("category selection supports all, one, and multiple collections", () => {
@@ -66,6 +66,29 @@ test("financial summary separates cash, revenue, expenses, and inventory purchas
     assert.equal(summary.receivables, 25);
     assert.equal(summary.inventoryValue, 35);
     assert.equal(summary.fixedAssets, 200);
+});
+
+test("broiler day-age stage guidance uses starter through day 14, grower through day 20, then finisher", () => {
+    assert.equal(broilerFeedStageForAge(1), "starter");
+    assert.equal(broilerFeedStageForAge(14), "starter");
+    assert.equal(broilerFeedStageForAge(15), "grower");
+    assert.equal(broilerFeedStageForAge(20), "grower");
+    assert.equal(broilerFeedStageForAge(21), "finisher");
+    assert.equal(broilerFeedStageForAge(35), "finisher");
+    assert.equal(broilerFeedStageForAge(0), null);
+});
+
+test("writing off an unpaid customer balance removes receivable and records a loss without changing cash", () => {
+    const summary = calculateFinanceSummary({
+        transactions: [{ direction: "inflow", amount: 40 }],
+        sales: [{ id: "s1", totalValue: 100, paymentReceived: 40, outstanding: 0, badDebtAmount: 60 }],
+        expenses: [], purchases: [], stockMovements: [], assets: [], inventoryValue: 0,
+    });
+    assert.equal(summary.availableCash, 40);
+    assert.equal(summary.receivables, 0);
+    assert.equal(summary.revenue, 100);
+    assert.equal(summary.expenses, 60);
+    assert.equal(summary.realizedProfit, 40);
 });
 
 test("mortality totals and rates derive from recorded event counts", () => {

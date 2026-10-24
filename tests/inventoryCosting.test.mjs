@@ -46,6 +46,20 @@ test("sample allocation transfers $2.80 to batch and leaves six kilograms worth 
   assert.equal(batch.value, 2.8);
 });
 
+test("partial purchase allocation records the batch cost and leaves the unallocated stock value", () => {
+  const source = purchase("p-partial", 50, 40);
+  source.allocations = [{ batchId: "b1", quantity: 10, cost: 8, allocatedAt: "2026-01-01T01:00:00.000Z" }];
+  const received = movement("r-partial", "received", 50, 40, { purchaseId: source.id, source: "purchase" });
+  const allocated = movement("a-partial", "allocated", 10, 8, { batchId: "b1", purchaseId: source.id, unitCost: 0.8 });
+  const balance = calculateInventoryBalances([item], [source], [received, allocated]).balances[0];
+  assert.equal(source.allocations[0].cost, 8);
+  assert.equal(balance.available, 40);
+  assert.equal(balance.value, 32);
+  assert.equal(balance.allocated, 10);
+  assert.equal(balance.allocatedValue, 8);
+  assert.equal(balance.onHandValue, 40);
+});
+
 test("batch costs count stock once at issue, while later usage reduces batch stock without duplicating cost", () => {
   const purchases = [{ ...purchase("p1", 10, 7), allocations: [{ batchId: "b1", quantity: 4, cost: 2.8, allocatedAt: "2026-01-01T01:00:00.000Z" }] }];
   const issued = movement("a1", "allocated", 4, 2.8, { batchId: "b1", purchaseId: "p1", unitCost: 0.7 });

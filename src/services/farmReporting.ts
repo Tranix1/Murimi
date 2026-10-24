@@ -13,10 +13,10 @@ export type ReportLoadResult = { data: FarmReportDataset; failures: Partial<Reco
 export const REPORT_CATEGORY_LABELS: Record<FarmCollection, string> = {
     batches: "Batch register and history", dailyRecords: "Daily farm records", mortalityRecords: "Mortality records and causes",
     batchProblems: "Farm incidents", weights: "Batch weights", expenses: "Operating expenses", purchases: "Purchases",
-    sales: "Sales and revenue", slaughter: "Slaughter records", assets: "Fixed assets", plans: "Farm plans",
+    sales: "Sales and revenue", slaughter: "Slaughter records", assets: "Fixed assets", plans: "Farm plans", planCategories: "Plan categories",
     transactions: "Cash movements", stock: "Inventory items", stockMovements: "Stock movements and consumption",
     payments: "Customer payments", treatments: "Treatments", customerCategories: "Customer categories",
-    customers: "Customers", paymentMethods: "Payment methods", purchaseCategories: "Purchase categories", purchaseMeasures: "Purchase measures", suppliers: "Suppliers",
+    customers: "Customers", paymentMethods: "Payment methods", purchaseCategories: "Purchase categories", purchaseMeasures: "Purchase measures", suppliers: "Suppliers", saleProductTypes: "Sale product types",
 };
 
 export const FINANCIAL_COLLECTIONS = new Set<FarmCollection>([
@@ -131,6 +131,31 @@ export function calculateFarmReportAnalytics(data: FarmReportDataset, filters: R
     }, (sale) => sale.totalValue);
     const expensesByCategory = groupValues(periodExpenses, (expense) => expense.category, (expense) => expense.amount);
     const purchasesByCategory = groupValues(periodPurchases, (purchase) => purchase.categoryNameSnapshot ?? purchase.category, (purchase) => purchase.totalCost);
+    const purchaseMonthMap = new Map<string, number>();
+    for (const purchase of periodPurchases) { const month = purchase.date?.slice(0, 7); if (month) purchaseMonthMap.set(month, (purchaseMonthMap.get(month) ?? 0) + purchase.totalCost); }
+    const purchasesByMonth = [...purchaseMonthMap].sort(([a], [b]) => a.localeCompare(b)).slice(-12).map(([label, value]) => ({ label, value: round(value) }));
+    const customerMap = new Map<string, { id: string; label: string; purchased: number; paid: number; outstanding: number; badDebt: number; salesCount: number; lastDate: string }>();
+    for (const sale of periodSales) {
+        const key = sale.customerId || sale.customerNameSnapshot || sale.customer || "walk_in";
+        const row = customerMap.get(key) ?? { id: key, label: sale.customerNameSnapshot || sale.customer || "Walk-in customer", purchased: 0, paid: 0, outstanding: 0, badDebt: 0, salesCount: 0, lastDate: "" };
+        row.purchased += sale.totalValue; row.paid += sale.paymentReceived; row.outstanding += sale.outstanding; row.badDebt += sale.badDebtAmount ?? 0; row.salesCount += 1; row.lastDate = sale.date > row.lastDate ? sale.date : row.lastDate; customerMap.set(key, row);
+    }
+    const customerPerformance = [...customerMap.values()].map((row) => ({ ...row, collectionRate: row.purchased > 0 ? row.paid / row.purchased * 100 : null })).sort((a, b) => b.paid - a.paid);
+    const supplierMap = new Map<string, { id: string; label: string; purchased: number; paid: number; outstanding: number; count: number; lastDate: string }>();
+    for (const purchase of periodPurchases) {
+        const key = purchase.supplierId || purchase.supplier || "unspecified";
+        const row = supplierMap.get(key) ?? { id: key, label: purchase.supplier || "Supplier not recorded", purchased: 0, paid: 0, outstanding: 0, count: 0, lastDate: "" };
+        row.purchased += purchase.totalCost; row.paid += purchase.amountPaid ?? (purchase.fullyPaid ? purchase.totalCost : 0); row.outstanding += purchase.outstanding ?? Math.max(0, purchase.totalCost - (purchase.amountPaid ?? 0)); row.count += 1; row.lastDate = purchase.date > row.lastDate ? purchase.date : row.lastDate; supplierMap.set(key, row);
+    }
+    const supplierPerformance = [...supplierMap.values()].sort((a, b) => b.paid - a.paid);
+    const cycleDurations = batches.flatMap((batch) => {
+        if (batch.status !== "completed") return [];
+        const finishDate = batch.closedAt ?? batch.historicalData?.actualCompletionDate;
+        if (!finishDate || !/^\d{4}-\d{2}-\d{2}$/.test(finishDate) || !/^\d{4}-\d{2}-\d{2}$/.test(batch.dateStarted) || (filters.fromDate && finishDate < filters.fromDate) || (filters.toDate && finishDate > filters.toDate)) return [];
+        const days = Math.max(0, Math.floor((new Date(`${finishDate}T00:00:00`).getTime() - new Date(`${batch.dateStarted}T00:00:00`).getTime()) / 86400000));
+        if (!Number.isFinite(days)) return [];
+        return [{ label: batch.batchNumber ?? batch.name, value: days }];
+    });
     const mortalityEvents = filterReportRecords("mortalityRecords", allMortality, {
         fromDate: filters.fromDate, toDate: filters.toDate, batchId: filters.batchId, relatedBatchRecordIds: relatedRecordIds(data, filters.batchId),
     });
@@ -156,7 +181,7 @@ export function calculateFarmReportAnalytics(data: FarmReportDataset, filters: R
     const totalBirdsSold = filters.fromDate || filters.toDate
         ? sum(periodSales.filter((sale) => sale.productType === "live_birds" && sale.unit === "birds").map((sale) => sale.quantity))
         : sum(batchPerformance.map(({ summary }) => summary.birdsSold));
-    const recordedOperatingExpenses = sum(periodExpenses.map((expense) => expense.amount));
+    const recordedOperatingExpenses = sum(periodExpenses.map((expense) => expense.amount)) + sum(periodSales.map((sale) => sale.badDebtAmount ?? 0));
     const consumedStockCost = sum(periodMovements.filter((movement) => movement.type === "consumed" && movement.financialClassification !== "fixed_asset").map((movement) => movement.totalCost ?? 0));
     const cashIn = sum(periodTransactions.filter((item) => item.direction === "inflow").map((item) => item.amount));
     const cashOut = sum(periodTransactions.filter((item) => item.direction === "outflow").map((item) => item.amount));
@@ -188,6 +213,11 @@ export function calculateFarmReportAnalytics(data: FarmReportDataset, filters: R
         revenueByBatch,
         expensesByCategory,
         purchasesByCategory,
+        purchasesByMonth,
+        customerPerformance,
+        supplierPerformance,
+        cycleDurations,
+        averageCycleDays: cycleDurations.length ? round(cycleDurations.reduce((sum, item) => sum + item.value, 0) / cycleDurations.length) : null,
         mortalityByCause: [...mortalityByCause].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value),
         cashByMonth: [...cashByMonth].sort(([a], [b]) => a.localeCompare(b)).slice(-8).map(([month, values]) => ({ month, ...values })),
         batchPerformance,

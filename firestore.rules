@@ -8,10 +8,10 @@ service cloud.firestore {
     function farmCollection(collectionName) {
       return collectionName in [
         'batches', 'dailyRecords', 'mortalityRecords', 'batchProblems', 'weights',
-        'expenses', 'purchases', 'sales', 'slaughter', 'assets', 'plans',
+        'expenses', 'purchases', 'sales', 'slaughter', 'assets', 'plans', 'planCategories',
         'transactions', 'stock', 'stockMovements', 'payments', 'treatments',
         'customerCategories', 'customers', 'paymentMethods', 'purchaseCategories',
-        'purchaseMeasures', 'suppliers'
+        'purchaseMeasures', 'suppliers', 'saleProductTypes'
       ];
     }
 
@@ -34,10 +34,10 @@ service cloud.firestore {
         && request.resource.data.name.size() <= 40
         && request.resource.data.currentRole is map;
       allow update: if owns(userId)
-        && resource.data.ownerId == userId
-        && resource.data.accountId == accountId
         && hasFarmScope(userId, accountId)
-        && request.resource.data.number == resource.data.number
+        && request.resource.data.number is int
+        && request.resource.data.number >= 1
+        && request.resource.data.number <= 10
         && request.resource.data.name is string
         && request.resource.data.name.size() > 0
         && request.resource.data.name.size() <= 40
@@ -52,15 +52,14 @@ service cloud.firestore {
       allow create: if owns(userId)
         && farmCollection(collectionName)
         && hasFarmScope(userId, accountId);
+      // The path already scopes records to this owner and farm account. Do
+      // not require old documents to contain scope fields: earlier app builds
+      // may have created records before those fields were added.
       allow update: if owns(userId)
         && farmCollection(collectionName)
-        && resource.data.ownerId == userId
-        && resource.data.accountId == accountId
         && hasFarmScope(userId, accountId);
       allow delete: if owns(userId)
-        && farmCollection(collectionName)
-        && resource.data.ownerId == userId
-        && resource.data.accountId == accountId;
+        && farmCollection(collectionName);
     }
 
     // No other paths or nested collections are client-accessible.

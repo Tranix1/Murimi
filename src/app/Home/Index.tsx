@@ -1,4 +1,4 @@
-import { calculateBatchSummary, calculateFinanceSummary, purchaseBackedAssets } from "@/Utilities/farmCalculations";
+import { batchProductionStageForAge, batchProductionStageLabel, calculateBatchAgeDays, calculateBatchSummary, calculateFinanceSummary, purchaseBackedAssets } from "@/Utilities/farmCalculations";
 import { calculateInventoryBalances } from "@/Utilities/inventoryCalculations";
 import CustomHeader from "@/components/CustomHeader";
 import ScreenWrapper from "@/components/ScreenWrapper";
@@ -89,13 +89,17 @@ export default function Home() {
             <View style={styles.flex}><ThemedText type="defaultSemiBold" color={text}>Create your first batch</ThemedText><ThemedText type="tiny" color={muted}>Start recording production for this account.</ThemedText></View>
             <Ionicons name="chevron-forward" size={19} color={muted} />
           </TouchableOpacity>
-        ) : batchSummaries.slice(0, 4).map(({ batch, summary }) => (
-          <TouchableOpacity key={batch.id} activeOpacity={0.8} onPress={() => router.push({ pathname: "/Batches/BatchDetails" as never, params: { batchId: batch.id } })} style={[styles.batchCard, { backgroundColor: surface, borderColor: border }]}>
-            <View style={[styles.batchIcon, { backgroundColor: `${accent}18` }]}><Ionicons name="leaf-outline" size={20} color={accent} /></View>
-            <View style={styles.flex}><ThemedText type="defaultSemiBold" color={text}>{batch.name} · Batch {batch.batchNumber ?? batch.id}</ThemedText><ThemedText type="tiny" color={muted}>{batch.enterprise} · {batch.stockType} · {summary.birdsAlive.toLocaleString()} alive</ThemedText></View>
-            <View style={styles.batchEnd}><ThemedText type="tiny" color={accent}>{batch.status.replace("_", " ")}</ThemedText><Ionicons name="chevron-forward" size={16} color={muted} /></View>
-          </TouchableOpacity>
-        ))}
+        ) : batchSummaries.slice(0, 4).map(({ batch, summary }) => {
+          const age = batch.historical ? null : calculateBatchAgeDays(batch.dateStarted);
+          const closed = batch.status === "completed" || batch.status === "archived";
+          const stage = age == null || closed ? null : batchProductionStageForAge(age);
+          const stageColor = stage ? stageColors[stage] : accent;
+          return <TouchableOpacity key={batch.id} activeOpacity={0.8} onPress={() => router.push({ pathname: "/Batches/BatchDetails" as never, params: { batchId: batch.id } })} style={[styles.batchCard, { backgroundColor: stage ? `${stageColor}0B` : surface, borderColor: stage ? `${stageColor}88` : border }]}>
+            <View style={[styles.batchIcon, { backgroundColor: `${stageColor}18` }]}><Ionicons name="leaf-outline" size={20} color={stageColor} /></View>
+            <View style={styles.flex}><ThemedText type="defaultSemiBold" color={text}>{batch.name} · Batch {batch.batchNumber ?? batch.id}</ThemedText><ThemedText type="tiny" color={muted}>{batch.enterprise} · {batch.stockType} · {summary.birdsAlive.toLocaleString()} alive{age == null ? "" : ` · Day ${age}${stage ? ` · ${batchProductionStageLabel(stage)}` : ""}`}</ThemedText></View>
+            <View style={styles.batchEnd}><ThemedText type="tiny" color={stageColor}>{batch.status.replace("_", " ")}</ThemedText><Ionicons name="chevron-forward" size={16} color={muted} /></View>
+          </TouchableOpacity>;
+        })}
 
         <View style={styles.sectionHeader}><ThemedText type="subtitle" color={text}>Quick actions</ThemedText></View>
         <View style={styles.quickActions}>
@@ -133,3 +137,5 @@ const styles = StyleSheet.create({
   batchCard: { borderWidth: 1, borderRadius: 15, padding: 12, flexDirection: "row", alignItems: "center", gap: 11, marginBottom: 9 }, batchIcon: { width: 40, height: 40, borderRadius: 13, alignItems: "center", justifyContent: "center" }, batchEnd: { alignItems: "flex-end", gap: 5 },
   quickActions: { flexDirection: "row", flexWrap: "wrap", gap: 9, marginBottom: 24 }, quickAction: { flexBasis: "48%", flexGrow: 1, borderWidth: 1, borderRadius: 14, minHeight: 76, alignItems: "center", justifyContent: "center", gap: 7 }, planRow: { borderWidth: 1, borderRadius: 14, padding: 11, flexDirection: "row", alignItems: "center", gap: 11, marginBottom: 8 }, planDate: { minWidth: 48, height: 40, borderRadius: 12, alignItems: "center", justifyContent: "center" }, noPlans: { paddingVertical: 6, marginBottom: 12 },
 });
+
+const stageColors = { starter: "#A16207", growing: "#087E8B", finishing: "#C2410C", ready_to_sell: "#15803D" };

@@ -67,7 +67,7 @@ export function filterReportRecords<T extends Record<string, unknown>>(
             if (!date || (filters.fromDate && date < filters.fromDate) || (filters.toDate && date > filters.toDate)) return false;
         }
         if (filters.batchId && !matchesBatch(collection, record, filters.batchId, filters.relatedBatchRecordIds)) return false;
-        if (filters.category && typeof record.category === "string" && record.category !== filters.category) return false;
+        if (filters.category && (collection === "purchases" || collection === "expenses") && record.category !== filters.category) return false;
         if (filters.paymentMethodId) {
             const hasMethod = "paymentMethodId" in record || "methodId" in record;
             if (hasMethod && record.paymentMethodId !== filters.paymentMethodId && record.methodId !== filters.paymentMethodId) return false;

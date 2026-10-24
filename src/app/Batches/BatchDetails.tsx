@@ -1,4 +1,4 @@
-import { calculateBatchSummary, calculateMortalityAnalytics } from "@/Utilities/farmCalculations";
+import { batchProductionStageForAge, batchProductionStageLabel, calculateBatchAgeDays, calculateBatchSummary, calculateMortalityAnalytics } from "@/Utilities/farmCalculations";
 import { ThemedText } from "@/components/ThemedText";
 import { FarmEmpty } from "@/components/farm/FarmComponents";
 import { useFarmRecords } from "@/hooks/useFarmRecords";
@@ -45,6 +45,13 @@ export default function BatchDetailsScreen() {
   const batchStockEvents = stockMovements.filter((movement) => movement.batchId === batch.id && ["allocated", "consumed", "wasted", "returned"].includes(movement.type)).sort((a, b) => b.date.localeCompare(a.date));
   const summary = calculateBatchSummary(batch, batchDaily, batchExpenses, batchSales, batchWeights, batchSlaughter, purchases, stockMovements);
   const mortalityAnalytics = calculateMortalityAnalytics(batchMortality, batch.initialQuantity);
+  const ageDays = batch.historical ? null : calculateBatchAgeDays(batch.dateStarted);
+  const productionStage = ageDays == null || batch.status === "completed" || batch.status === "archived" ? null : batchProductionStageForAge(ageDays);
+  const stageColor = productionStage ? stageColors[productionStage] : muted;
+  const chickQuantity = batch.paidQuantity ?? batch.initialQuantity;
+  const chickCost = batch.historical ? batch.historicalData?.chicksCost : (batch.costPerUnit ?? 0) * chickQuantity;
+  const expectedRevenue = batch.expectedSellingPrice == null ? null : summary.birdsAlive * batch.expectedSellingPrice;
+  const expectedProfit = expectedRevenue == null ? null : expectedRevenue - summary.costsIncurred;
 
   const actions = [
     { label: "Record today", icon: "today-outline" as const, path: "/Batches/RecordToday" },
@@ -71,14 +78,25 @@ export default function BatchDetailsScreen() {
     }
   };
 
+  const startSelling = async () => {
+    if (!userId || !accountId) return;
+    try {
+      await updateFarmRecord(userId, accountId, "batches", batch.id, { status: "selling", productionComplete: true });
+    } catch (cause) {
+      Alert.alert("Could not start selling", cause instanceof Error ? cause.message : "Please try again.");
+    }
+  };
+
   return (
-    <BatchPage title={batch.name}>
+    <BatchPage title={ageDays == null ? batch.name : `${batch.name} · Day ${ageDays}`}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.subtitleRow}>
           <ThemedText type="tiny" color={muted}>{batch.batchNumber ? `${batch.batchNumber} · ` : ""}{batch.enterprise} · {batch.stockType} · Started {batch.dateStarted || "unknown"}{batch.dateStartedEstimated ? " (estimated)" : ""}</ThemedText>
           <ThemedText type="tiny" color={accent} style={styles.status}>{batch.status.replace("_", " ")}</ThemedText>
         </View>
 
+        {productionStage ? <View style={[styles.stageBadge, { backgroundColor: `${stageColor}18`, borderColor: `${stageColor}66` }]}><View style={[styles.stageDot, { backgroundColor: stageColor }]} /><ThemedText type="tiny" color={stageColor}>{batchProductionStageLabel(productionStage)} · Day {ageDays}</ThemedText></View> : null}
+        {productionStage === "ready_to_sell" && batch.status === "growing" ? <ThemedText type="tiny" color={stageColor} style={styles.readyNote}>This flock is past Day 35. Mark it as selling when you are ready to start recording sales.</ThemedText> : null}
         <View style={[styles.hero, { backgroundColor: accent }]}>
           <ThemedText type="tiny" style={styles.heroLabel}>Birds currently alive</ThemedText>
           <ThemedText type="title" style={styles.heroValue}>{summary.birdsAlive.toLocaleString()}</ThemedText>
@@ -97,6 +115,9 @@ export default function BatchDetailsScreen() {
         <SectionTitle title="Overview" />
         <View style={[styles.card, { backgroundColor: surface, borderColor: border }]}>
           <Metric label="Initial birds" value={batch.historicalData?.unknownFields?.includes("initialQuantity") ? "Unknown" : batch.initialQuantity.toLocaleString()} />
+          {batch.expectedSellingPrice != null ? <Metric label="Expected selling price per bird" value={money(batch.expectedSellingPrice)} /> : null}
+          {expectedRevenue != null ? <Metric label="Expected revenue at current bird count" value={money(expectedRevenue)} /> : null}
+          {expectedProfit != null ? <Metric label="Expected profit after recorded costs" value={money(expectedProfit)} /> : null}
           {batch.supplier ? <Metric label="Supplier" value={batch.supplier} /> : null}
           {batch.supplierId ? <Metric label="Supplier ID" value={batch.supplierId} /> : null}
           <Metric label="Birds sold" value={summary.birdsSold.toLocaleString()} />
@@ -131,9 +152,10 @@ export default function BatchDetailsScreen() {
         {batchProblems.slice(0, 8).map((entry) => <View key={entry.id} style={[styles.record, { backgroundColor: surface, borderColor: border }]}><ThemedText type="defaultSemiBold">{entry.customCategory ?? entry.category.replaceAll("_", " ")} · {entry.severity ?? "severity unknown"}</ThemedText><ThemedText type="tiny" color={muted}>{entry.date} · {entry.description}</ThemedText>{entry.actionTaken ? <ThemedText type="tiny" color={muted}>Action: {entry.actionTaken}</ThemedText> : null}{entry.outcome ? <ThemedText type="tiny" color={muted}>Outcome: {entry.outcome}</ThemedText> : null}</View>)}
         {!batchProblems.length && <ThemedText type="tiny" color={muted} style={styles.emptyHint}>No problem or observation notes recorded.</ThemedText>}
 
-        <View style={styles.sectionHeader}><SectionTitle title="Purchases" /><ThemedText type="tiny" color={muted}>{batchPurchases.length} entries</ThemedText></View>
+        <View style={styles.sectionHeader}><SectionTitle title="Purchases" /><ThemedText type="tiny" color={muted}>{batchPurchases.length + (chickCost != null && chickCost > 0 ? 1 : 0)} entries</ThemedText></View>
+        {chickCost != null && chickCost > 0 ? <View style={[styles.record, { backgroundColor: surface, borderColor: border }]}><ThemedText type="defaultSemiBold">Chicks · initial batch purchase</ThemedText><ThemedText type="tiny" color={muted}>{chickQuantity.toLocaleString()} birds · {money(chickCost)} total · {money(chickCost / Math.max(1, chickQuantity))} per bird{batch.supplier ? ` · ${batch.supplier}` : ""}</ThemedText></View> : null}
         {batchPurchases.slice(0, 5).map((purchase) => <View key={purchase.id} style={[styles.record, { backgroundColor: surface, borderColor: border }]}><ThemedText type="defaultSemiBold">{purchase.itemName}</ThemedText><ThemedText type="tiny" color={muted}>{purchase.date} · {purchase.category} · {money(purchase.totalCost)}</ThemedText></View>)}
-        {!batchPurchases.length && <ThemedText type="tiny" color={muted} style={styles.emptyHint}>No purchases allocated to this batch.</ThemedText>}
+        {!batchPurchases.length && !(chickCost != null && chickCost > 0) && <ThemedText type="tiny" color={muted} style={styles.emptyHint}>No purchases allocated to this batch.</ThemedText>}
 
         <View style={styles.sectionHeader}><SectionTitle title="Inventory issued and used" /><ThemedText type="tiny" color={muted}>{batchStockEvents.length} movements</ThemedText></View>
         {batchStockEvents.slice(0, 10).map((movement) => <View key={movement.id} style={[styles.record, { backgroundColor: surface, borderColor: border }]}><ThemedText type="defaultSemiBold">{inventoryItems.find((item) => item.id === movement.itemId)?.name ?? "Inventory item"} · {movement.type.replaceAll("_", " ")}</ThemedText><ThemedText type="tiny" color={muted}>{movement.date} · {movement.quantity} {movement.unit} · {movement.totalCost == null ? "Cost unavailable" : money(movement.totalCost)}</ThemedText></View>)}
@@ -156,6 +178,7 @@ export default function BatchDetailsScreen() {
 
         <SectionTitle title="Batch status" />
         <View style={styles.completionRow}>
+          {batch.status === "growing" && <TouchableOpacity onPress={() => void startSelling()} style={[styles.completionButton, { backgroundColor: stageColor, borderColor: stageColor }]}><ThemedText type="tiny" style={styles.white}>Start selling</ThemedText></TouchableOpacity>}
           {!batch.productionComplete && <TouchableOpacity onPress={() => void updateCompletion("productionComplete")} style={[styles.completionButton, { borderColor: border }]}><ThemedText type="tiny" color={text}>Mark production complete</ThemedText></TouchableOpacity>}
           {!batch.sellingComplete && <TouchableOpacity onPress={() => void updateCompletion("sellingComplete")} style={[styles.completionButton, { backgroundColor: accent, borderColor: accent }]}><ThemedText type="tiny" style={styles.white}>Close selling</ThemedText></TouchableOpacity>}
           {batch.productionComplete && <ThemedText type="tiny" color={muted}>Production complete</ThemedText>}
@@ -192,6 +215,9 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: 17, paddingBottom: 28 },
   subtitleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 12 },
   status: { textTransform: "capitalize", fontWeight: "700" },
+  stageBadge: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 7, borderWidth: 1, borderRadius: 15, paddingHorizontal: 10, paddingVertical: 6, marginBottom: 12 },
+  stageDot: { width: 8, height: 8, borderRadius: 4 },
+  readyNote: { paddingBottom: 12, lineHeight: 18 },
   hero: { borderRadius: 18, padding: 18, marginBottom: 14, gap: 3 },
   heroLabel: { color: "#FFFFFFD8" },
   heroValue: { color: "#FFFFFF", fontSize: 34, lineHeight: 39 },
@@ -211,3 +237,5 @@ const styles = StyleSheet.create({
   completionButton: { minHeight: 40, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, alignItems: "center", justifyContent: "center" },
   white: { color: "#FFFFFF", fontWeight: "700" },
 });
+
+const stageColors = { starter: "#A16207", growing: "#087E8B", finishing: "#C2410C", ready_to_sell: "#15803D" };

@@ -33,8 +33,8 @@ import {
   type Unsubscribe,
 } from "@react-native-firebase/firestore";
 
-export type FarmCollection = "batches" | "dailyRecords" | "mortalityRecords" | "batchProblems" | "weights" | "expenses" | "purchases" | "sales" | "slaughter" | "assets" | "plans" | "transactions" | "stock" | "stockMovements" | "payments" | "treatments" | "customerCategories" | "customers" | "paymentMethods" | "purchaseCategories" | "purchaseMeasures" | "suppliers";
-export const FARM_COLLECTIONS: FarmCollection[] = ["batches", "dailyRecords", "mortalityRecords", "batchProblems", "weights", "expenses", "purchases", "sales", "slaughter", "assets", "plans", "transactions", "stock", "stockMovements", "payments", "treatments", "customerCategories", "customers", "paymentMethods", "purchaseCategories", "purchaseMeasures", "suppliers"];
+export type FarmCollection = "batches" | "dailyRecords" | "mortalityRecords" | "batchProblems" | "weights" | "expenses" | "purchases" | "sales" | "slaughter" | "assets" | "plans" | "planCategories" | "transactions" | "stock" | "stockMovements" | "payments" | "treatments" | "customerCategories" | "customers" | "paymentMethods" | "purchaseCategories" | "purchaseMeasures" | "suppliers" | "saleProductTypes";
+export const FARM_COLLECTIONS: FarmCollection[] = ["batches", "dailyRecords", "mortalityRecords", "batchProblems", "weights", "purchases", "sales", "slaughter", "assets", "plans", "planCategories", "transactions", "stock", "stockMovements", "payments", "treatments", "customerCategories", "customers", "paymentMethods", "purchaseCategories", "purchaseMeasures", "suppliers", "saleProductTypes"];
 
 const firestore = getFirestore();
 const farmCollection = (uid: string, accountId: string, name: FarmCollection) => collection(firestore, "users", uid, "farmAccounts", accountId, name);
@@ -234,7 +234,7 @@ export async function savePurchaseCategory(uid: string, accountId: string, input
   return id;
 }
 
-export async function savePurchase(uid: string, accountId: string, input: Omit<import("@/types/farm").Purchase, keyof FarmRecord | "allocations" | "unallocatedCost" | "unallocatedQuantity"> & { batchId?: string; newInventoryItem?: boolean; idempotencyKey?: string }): Promise<string> {
+export async function savePurchase(uid: string, accountId: string, input: Omit<import("@/types/farm").Purchase, keyof FarmRecord | "allocations" | "unallocatedCost" | "unallocatedQuantity"> & { batchId?: string; allocationQuantity?: number; newInventoryItem?: boolean; idempotencyKey?: string }): Promise<string> {
   if (input.idempotencyKey && !/^[A-Za-z0-9_-]{1,100}$/.test(input.idempotencyKey)) throw new Error("Invalid purchase reference.");
   const reference = input.idempotencyKey ? farmDocument(uid, accountId, "purchases", `purchase_${input.idempotencyKey}`) : doc(farmCollection(uid, accountId, "purchases"));
   if (await getLocalFarmRecord(uid, accountId, "purchases", reference.id)) return reference.id;
@@ -245,7 +245,7 @@ export async function savePurchase(uid: string, accountId: string, input: Omit<i
     if (batch?.status === "completed" || batch?.status === "archived") throw new Error("This batch is closed. Do not allocate new purchases to it.");
   }
   const created = now();
-  const { newInventoryItem, idempotencyKey: _idempotencyKey, ...purchaseInput } = input;
+  const { newInventoryItem, idempotencyKey: _idempotencyKey, allocationQuantity: requestedAllocation, ...purchaseInput } = input;
   const totalCost = moneyAmount(input.totalCost);
   // A missing payment amount means no payment has been confirmed yet. Keep the
   // full purchase balance payable; selecting a payment method alone is not proof.
@@ -268,20 +268,25 @@ export async function savePurchase(uid: string, accountId: string, input: Omit<i
     const movementId = `purchase_received_${reference.id}`;
     changes.push({ collectionName: "stockMovements", id: movementId, record: { id: movementId, ownerId: uid, accountId, itemId, purchaseId: reference.id, date: input.date, type: "received", quantity: input.quantity, unit: input.unit, totalCost, unitCost: input.quantity ? totalCost / input.quantity : undefined, financialClassification, source: "purchase", reason: "Goods received", createdAt: created, updatedAt: created } });
   }
-  const allocations = input.batchId && inventoryTracked && input.receiptStatus === "received" ? [{ id: `${reference.id}_${input.batchId}`, batchId: input.batchId, quantity: input.quantity, cost: totalCost, allocatedAt: created }] : [];
+  const allocationQuantity = requestedAllocation ?? input.quantity ?? 0;
+  if (!Number.isFinite(allocationQuantity) || allocationQuantity < 0 || allocationQuantity > (input.quantity ?? 0)) throw new Error("Batch allocation must be between zero and the received quantity.");
+  const allocatedCost = input.quantity ? moneyAmount(totalCost * allocationQuantity / input.quantity) : 0;
+  const allocations = input.batchId && inventoryTracked && input.receiptStatus === "received" && allocationQuantity > 0 ? [{ id: `${reference.id}_${input.batchId}`, batchId: input.batchId, quantity: allocationQuantity, cost: allocatedCost, allocatedAt: created }] : [];
   if (allocations.length && itemId) {
     const movementId = `purchase_allocated_${reference.id}_${input.batchId}`;
-    changes.push({ collectionName: "stockMovements", id: movementId, record: { id: movementId, ownerId: uid, accountId, itemId, purchaseId: reference.id, date: input.date, type: "allocated", quantity: input.quantity, unit: input.unit ?? "units", batchId: input.batchId, batchNameSnapshot: selectedBatch?.name, batchNumberSnapshot: selectedBatch?.batchNumber, totalCost, unitCost: input.quantity ? totalCost / input.quantity : undefined, financialClassification, source: "purchase", reason: "Stock allocated to batch; not consumed", createdAt: created, updatedAt: created } });
+    changes.push({ collectionName: "stockMovements", id: movementId, record: { id: movementId, ownerId: uid, accountId, itemId, purchaseId: reference.id, date: input.date, type: "allocated", quantity: allocationQuantity, unit: input.unit ?? "units", batchId: input.batchId, batchNameSnapshot: selectedBatch?.name, batchNumberSnapshot: selectedBatch?.batchNumber, totalCost: allocatedCost, unitCost: allocationQuantity ? allocatedCost / allocationQuantity : undefined, financialClassification, source: "purchase", reason: "Stock allocated to batch; not consumed", createdAt: created, updatedAt: created } });
   }
   const namedAllocations = allocations.map((allocation) => ({ ...allocation, batchNameSnapshot: selectedBatch?.name, batchNumberSnapshot: selectedBatch?.batchNumber }));
-  const record = { ...purchaseInput, itemType, inventoryTracked, financialClassification, inventoryItemId: itemId, totalCost, amountPaid, outstanding, allocations: namedAllocations, unallocatedQuantity: input.quantity == null ? undefined : Math.max(0, input.quantity - namedAllocations.reduce((sum, allocation) => sum + (allocation.quantity ?? 0), 0)), unallocatedCost: namedAllocations.length ? 0 : totalCost, id: reference.id, ownerId: uid, accountId, createdAt: created, updatedAt: created };
+  const allocatedQuantity = namedAllocations.reduce((sum, allocation) => sum + (allocation.quantity ?? 0), 0);
+  const allocatedPurchaseCost = namedAllocations.reduce((sum, allocation) => sum + (allocation.cost ?? 0), 0);
+  const record = { ...purchaseInput, itemType, inventoryTracked, financialClassification, inventoryItemId: itemId, totalCost, amountPaid, outstanding, allocations: namedAllocations, unallocatedQuantity: input.quantity == null ? undefined : Math.max(0, input.quantity - allocatedQuantity), unallocatedCost: moneyAmount(Math.max(0, totalCost - allocatedPurchaseCost)), id: reference.id, ownerId: uid, accountId, createdAt: created, updatedAt: created };
   changes.unshift({ collectionName: "purchases", id: reference.id, record });
   const cashId = `purchase_${reference.id}`;
   if (amountPaid > 0) changes.push({ collectionName: "transactions", id: cashId, record: { id: cashId, ownerId: uid, accountId, date: input.date, direction: "outflow", category: `purchase_${input.category}`, amount: amountPaid, description: input.itemName, sourceId: reference.id, createdAt: created, updatedAt: created } });
   if (financialClassification === "fixed_asset") {
     const assetId = `asset_purchase_${reference.id}`;
     const assetCategory = input.category === "heating" ? "heating" : input.category === "water" ? "water" : input.category === "buildings" ? "buildings" : input.category === "feeders_drinkers" ? "feeders_drinkers" : "other";
-    changes.push({ collectionName: "assets", id: assetId, record: { id: assetId, ownerId: uid, accountId, purchaseId: reference.id, name: input.itemName, category: assetCategory, purchaseDate: input.date, inServiceDate: input.inServiceDate ?? input.date, supplier: input.supplier, originalCost: totalCost, estimatedValue: totalCost, quantity: input.quantity ?? 1, location: input.location, condition: input.assetCondition ?? "new", usefulLifeYears: input.usefulLifeYears, residualValue: input.residualValue, accumulatedDepreciation: 0, status: "active", notes: input.notes, createdAt: created, updatedAt: created } });
+    changes.push({ collectionName: "assets", id: assetId, record: { id: assetId, ownerId: uid, accountId, purchaseId: reference.id, name: input.itemName, category: assetCategory, purchaseDate: input.date, inServiceDate: input.inServiceDate ?? input.date, supplier: input.supplier, originalCost: totalCost, estimatedValue: totalCost, quantity: input.quantity ?? 1, location: input.location, condition: input.assetCondition ?? "new", usefulLifeYears: input.usefulLifeYears, residualValue: input.residualValue, accumulatedDepreciation: 0, status: "not_in_use", notes: input.notes, createdAt: created, updatedAt: created } });
   }
   await commitLocalFarmChanges(uid, accountId, changes);
   return reference.id;
@@ -406,11 +411,27 @@ export async function saveSalePayment(uid: string, accountId: string, sale: Sale
   return paymentRef.id;
 }
 
-function classifySyncError(error: unknown): { message: string; kind: string; retryable: boolean } {
+export async function writeOffSaleBalance(uid: string, accountId: string, sale: Sale, reason: string, date = now().slice(0, 10)): Promise<void> {
+  if (!reason.trim()) throw new Error("Enter why this balance will not be collected.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Enter a valid write-off date.");
+  const current = await getLocalFarmRecord<Sale>(uid, accountId, "sales", sale.id);
+  if (!current || current.outstanding <= 0) throw new Error("This sale has no remaining balance to write off.");
+  const amount = moneyAmount(current.outstanding);
+  const updatedAt = now();
+  await commitLocalFarmChanges(uid, accountId, [{
+    collectionName: "sales", id: sale.id,
+    record: { ...current, outstanding: 0, badDebtAmount: moneyAmount((current.badDebtAmount ?? 0) + amount), badDebtDate: date, badDebtReason: reason.trim(), paymentStatus: "written_off", updatedAt },
+  }]);
+}
+
+function classifySyncError(error: unknown, change?: QueuedFarmChange): { message: string; kind: string; retryable: boolean } {
   const cause = error as { code?: string; message?: string };
   const code = (cause?.code ?? "").toLowerCase();
   const message = cause?.message ?? "Farm data could not be synchronized.";
-  if (code.includes("permission-denied")) return { message: "Firebase denied this write. Check the deployed Firestore rules and account ownership.", kind: "permission", retryable: false };
+  if (code.includes("permission-denied")) {
+    const target = change ? ` at /users/${change.uid}/farmAccounts/${change.accountId}/${change.collectionName}/${change.recordId} (${change.operation})` : "";
+    return { message: `Firebase denied this write${target}. Confirm the deployed rules allow this farm path and the signed-in UID matches the path owner.`, kind: "permission", retryable: false };
+  }
   if (code.includes("unauthenticated") || code.includes("user-token-expired")) return { message: "Sign in again to synchronize this farm account.", kind: "authentication", retryable: false };
   if (code.includes("invalid-argument") || code.includes("failed-precondition")) return { message, kind: "validation", retryable: false };
   return { message, kind: code || "network", retryable: true };
@@ -535,7 +556,7 @@ async function syncQueuedChange(change: QueuedFarmChange): Promise<Record<string
 }
 
 export type FarmSyncResult = { success: true; pendingCount: 0 } | { success: false; pendingCount: number; error: string };
-const FARM_FIREBASE_PROJECT_ID = "murimi-9a3e7";
+export const FARM_FIREBASE_PROJECT_ID = "murimi-9a3e7";
 const activeSyncs = new Map<string, Promise<FarmSyncResult>>();
 const activeRefreshes = new Map<string, Promise<void>>();
 const deletingMurimiUsers = new Set<string>();
@@ -567,7 +588,7 @@ export function syncFarmAccount(uid: string, accountId: string, force = false, o
             await setLocalFarmRecordSynced(uid, accountId, item.collectionName, item.recordId, record ?? item.record ?? undefined);
           }
         } catch (error) {
-          const classification = classifySyncError(error);
+          const classification = classifySyncError(error, item);
           await recordFarmSyncFailure(item.operationId, classification.message, classification.kind);
           const summary = await getFarmSyncSummary(uid, accountId);
           onProgress?.("failed", classification.message);

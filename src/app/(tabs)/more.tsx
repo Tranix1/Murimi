@@ -18,6 +18,7 @@ export default function MoreScreen() {
     { title: "Farm plans", caption: "Plan and track upcoming work", icon: "calendar-outline", path: "/Plans/Index" },
     { title: "Assets", caption: "Equipment, buildings and property", icon: "business-outline", path: "/Assets/Index" },
     { title: "Reports & Export", caption: "Farm analytics and offline data exports", icon: "bar-chart-outline", path: "/Reports/Index" },
+    { title: "Finance app connections", caption: "Share read-only financial data securely", icon: "share-social-outline", path: "/Integrations/Index" },
     { title: "About Murimi", caption: "About this farm management app", icon: "information-circle-outline", path: "/About" },
   ];
   return <ScreenWrapper fh={false}><CustomHeader pageTitle="More" /><ScrollView contentContainerStyle={styles.content}><ThemedText type="title" color={text}>More tools</ThemedText><ThemedText type="tiny" color={muted} style={styles.subtitle}>Manage your farm account and records.</ThemedText>{items.map((item) => <MenuItem key={item.title} {...item} onPress={() => router.push(item.path as never)} />)}<View style={styles.footer}><Ionicons name="leaf-outline" size={20} color={accent} /><ThemedText type="tiny" color={muted}>Murimi · Farm records for your selected account</ThemedText></View></ScrollView></ScreenWrapper>;

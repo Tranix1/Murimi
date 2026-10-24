@@ -1,4 +1,4 @@
-import { calculateBatchSummary } from "@/Utilities/farmCalculations";
+import { batchProductionStageForAge, batchProductionStageLabel, calculateBatchAgeDays, calculateBatchSummary } from "@/Utilities/farmCalculations";
 import CustomHeader from "@/components/CustomHeader";
 import ScreenWrapper from "@/components/ScreenWrapper";
 import { ThemedText } from "@/components/ThemedText";
@@ -10,7 +10,8 @@ import type { Batch, BatchStatus, DailyRecord, Expense, Purchase, Sale, Slaughte
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useMemo, useState } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from "react-native";
+import { updateFarmRecord } from "@/services/farmRepository";
 
 type Filter = "all" | "active" | BatchStatus;
 type Sort = "newest" | "oldest" | "highest_cost" | "age";
@@ -21,7 +22,7 @@ const filters: { label: string; value: Filter }[] = [
 ];
 
 export default function BatchesTab() {
-  const { records: batches, isLoading, error } = useFarmRecords<Batch>("batches");
+  const { records: batches, isLoading, error, userId, accountId } = useFarmRecords<Batch>("batches");
   const { records: daily } = useFarmRecords<DailyRecord>("dailyRecords");
   const { records: expenses } = useFarmRecords<Expense>("expenses");
   const { records: purchases } = useFarmRecords<Purchase>("purchases");
@@ -32,12 +33,25 @@ export default function BatchesTab() {
   const [filter, setFilter] = useState<Filter>("all");
   const [sort, setSort] = useState<Sort>("newest");
   const [search, setSearch] = useState("");
+  const [startingSaleId, setStartingSaleId] = useState<string | null>(null);
   const accent = useThemeColor("accent");
   const surface = useThemeColor("backgroundLight");
   const border = useThemeColor("border");
   const muted = useThemeColor("textlight");
   const text = useThemeColor("text");
   const bad = useThemeColor("bad");
+
+  const startSelling = async (batch: Batch) => {
+    if (!userId || !accountId || startingSaleId) return;
+    setStartingSaleId(batch.id);
+    try {
+      await updateFarmRecord(userId, accountId, "batches", batch.id, { status: "selling", productionComplete: true });
+    } catch (cause) {
+      Alert.alert("Could not start selling", cause instanceof Error ? cause.message : "Please try again.");
+    } finally {
+      setStartingSaleId(null);
+    }
+  };
 
   const visibleBatches = useMemo(() => {
     const normalized = search.trim().toLowerCase();
@@ -112,15 +126,18 @@ export default function BatchesTab() {
           {visibleBatches.map((batch) => {
             const values = summary(batch);
             const age = batch.historical ? historicalAge(batch.dateStarted, batch.historicalData?.actualCompletionDate) : ageDays(batch.dateStarted);
+            const closed = batch.status === "completed" || batch.status === "archived";
+            const productionStage = batch.historical || closed || age == null ? null : batchProductionStageForAge(age);
+            const stageColor = productionStage ? stageColors[productionStage] : accent;
             const mortality = values.mortalityPercent == null ? "—" : `${values.mortalityPercent.toFixed(1)}%`;
             return (
-              <View key={batch.id} style={[styles.card, { backgroundColor: surface, borderColor: border }]}>
+              <View key={batch.id} style={[styles.card, { backgroundColor: productionStage ? `${stageColor}0B` : surface, borderColor: productionStage ? `${stageColor}88` : border }]}>
                 <TouchableOpacity activeOpacity={0.8} onPress={() => router.push({ pathname: "/Batches/BatchDetails" as never, params: { batchId: batch.id } })} style={styles.cardMain}>
                   <View style={styles.cardHeading}>
                     <View style={[styles.cardIcon, { backgroundColor: `${accent}18` }]}><Ionicons name="leaf-outline" size={20} color={accent} /></View>
                     <View style={styles.cardTitle}>
                       <ThemedText type="defaultSemiBold" color={text}>{batch.batchNumber ? `Batch ${batch.batchNumber}` : batch.name}</ThemedText>
-                      <ThemedText type="tiny" color={muted}>{batch.enterprise} · {batch.stockType} · {batch.historical ? age == null ? "Historical dates unknown" : `Completed in ${age} days` : `Day ${age}`}</ThemedText>
+                      <ThemedText type="tiny" color={muted}>{batch.enterprise} · {batch.stockType} · {batch.historical ? age == null ? "Historical dates unknown" : `Completed in ${age} days` : `Day ${age}${productionStage ? ` · ${batchProductionStageLabel(productionStage)}` : ""}`}</ThemedText>
                     </View>
                     <ThemedText type="tiny" color={batch.status === "completed" ? muted : accent} style={styles.status}>{batch.status.replace("_", " ")}</ThemedText>
                   </View>
@@ -135,7 +152,7 @@ export default function BatchesTab() {
                 </TouchableOpacity>
                 <View style={[styles.cardFooter, { borderTopColor: border }]}>
                   <ThemedText type="tiny" color={muted}>Started {batch.dateStarted}</ThemedText>
-                  <TouchableOpacity onPress={() => router.push({ pathname: "/Batches/Sales" as never, params: { batchId: batch.id } })} style={[styles.saleButton, { backgroundColor: accent }]}><Ionicons name="add" size={16} color="#FFFFFF" /><ThemedText type="tiny" style={styles.saleButtonText}>Record sale</ThemedText></TouchableOpacity>
+                  <View style={styles.footerActions}>{productionStage === "ready_to_sell" && batch.status === "growing" ? <TouchableOpacity disabled={startingSaleId != null} onPress={() => void startSelling(batch)} style={[styles.saleButton, { backgroundColor: stageColors.ready_to_sell, opacity: startingSaleId === batch.id ? 0.6 : 1 }]}><ThemedText type="tiny" style={styles.saleButtonText}>{startingSaleId === batch.id ? "Saving…" : "Start selling"}</ThemedText></TouchableOpacity> : null}<TouchableOpacity onPress={() => router.push({ pathname: "/Batches/Sales" as never, params: { batchId: batch.id } })} style={[styles.saleButton, { backgroundColor: accent }]}><Ionicons name="add" size={16} color="#FFFFFF" /><ThemedText type="tiny" style={styles.saleButtonText}>Record sale</ThemedText></TouchableOpacity></View>
                 </View>
               </View>
             );
@@ -153,9 +170,7 @@ function MiniStat({ label, value, valueColor }: { label: string; value: string; 
 }
 
 function ageDays(date: string) {
-  const parsed = new Date(`${date}T00:00:00`);
-  if (!Number.isFinite(parsed.getTime())) return 0;
-  return Math.max(0, Math.floor((Date.now() - parsed.getTime()) / 86_400_000) + 1);
+  return calculateBatchAgeDays(date) ?? 0;
 }
 
 function historicalAge(start: string, end?: string) { if (!start || !end) return null; const from = new Date(`${start}T00:00:00`); const to = new Date(`${end}T00:00:00`); if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || to < from) return null; return Math.floor((to.getTime() - from.getTime()) / 86_400_000) + 1; }
@@ -184,6 +199,9 @@ const styles = StyleSheet.create({
   miniStat: { width: "33.33%", gap: 3 },
   miniValue: { fontSize: 14 },
   cardFooter: { paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  footerActions: { flexDirection: "row", gap: 7, alignItems: "center" },
   saleButton: { minHeight: 34, borderRadius: 10, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 3 },
   saleButtonText: { color: "#FFFFFF", fontWeight: "700" },
 });
+
+const stageColors = { starter: "#A16207", growing: "#087E8B", finishing: "#C2410C", ready_to_sell: "#15803D" };
