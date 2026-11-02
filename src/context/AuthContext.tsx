@@ -1,21 +1,23 @@
 
-import React, {
+import { getFarmAccountMetadata, saveFarmAccountMetadata } from "@/services/farmRepository";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
   createContext,
   ReactNode,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { getFarmAccountMetadata, saveFarmAccountMetadata } from "@/services/farmRepository";
 
+import type { AccountType, CurrentRole } from "@/types/types";
 import {
   getAuth,
   onAuthStateChanged,
   signOut,
   updateProfile,
 } from "@react-native-firebase/auth";
-import type { AccountType, CurrentRole } from "@/types/types";
+import { callArmament } from "@/services/armamentApi";
 
 export type SavedAccount = {
   id: string;
@@ -109,8 +111,10 @@ export function AuthProvider({
   const [currentRole, setCurrentRole] = useState<CurrentRole>(defaultRole());
   const [accounts, setAccounts] = useState<SavedAccount[]>([]);
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
+  const accountRestoreGeneration = useRef(0);
 
   const setupUser = async (firebaseUser: { uid: string; phoneNumber: string | null; displayName: string | null; email: string | null; photoURL: string | null } | null, accountType?: AccountType) => {
+    const restoreGeneration = ++accountRestoreGeneration.current;
     if (!firebaseUser) {
       setUser(null);
       setIsSignedIn(false);
@@ -165,6 +169,7 @@ export function AuthProvider({
       void (async () => {
         try {
           const cloudAccounts = await getFarmAccountMetadata(firebaseUser.uid);
+          if (restoreGeneration !== accountRestoreGeneration.current || getAuth().currentUser?.uid !== firebaseUser.uid) return;
           if (cloudAccounts.length) {
             const restoredAccounts = cloudAccounts as SavedAccount[];
             const active = restoredAccounts.find((item) => item.id === storedActiveId) ?? restoredAccounts[0];
@@ -235,7 +240,7 @@ export function AuthProvider({
   };
 
   // Signup: call after phone OTP verification.
-  const signUp = async ({ displayName, phoneNumber, accountType }: SignUpInput): Promise<AuthResponse> => {
+  const signUp = async ({ displayName, phoneNumber, accountType, referrerCode }: SignUpInput): Promise<AuthResponse> => {
     try {
       const auth = getAuth();
       const firebaseUser = auth.currentUser;
@@ -265,6 +270,12 @@ export function AuthProvider({
       });
 
       await setupUser(auth.currentUser, accountType);
+      try {
+        await callArmament("assignArmamentReferralCode");
+        if (referrerCode?.trim()) await callArmament("attributeArmamentReferral", { code: referrerCode.trim() });
+      } catch (referralError) {
+        console.warn("Armament referral setup was not completed; account registration is unaffected.", referralError);
+      }
 
       return {
         success: true,
@@ -328,6 +339,7 @@ export function AuthProvider({
 
   const removeFarmAccount = async (accountId: string): Promise<boolean> => {
     if (!user) return false;
+    accountRestoreGeneration.current += 1;
     const nextAccounts = accounts.filter((account) => account.id !== accountId);
     if (nextAccounts.length === accounts.length) return false;
     const nextActive = activeAccountId === accountId ? nextAccounts[0] : nextAccounts.find((account) => account.id === activeAccountId);

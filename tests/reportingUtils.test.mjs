@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import "./inventoryCosting.test.mjs";
 import * as XLSX from "xlsx";
 import { buildCategoryCsvFiles, filterReportRecords, recordsToCsv, selectReportCategories } from "../src/services/reportingUtils.ts";
 import { createXlsxWorkbook } from "../src/services/spreadsheetExport.ts";
 import { broilerFeedStageForAge, calculateFinanceSummary, calculateMortalityAnalytics } from "../src/Utilities/farmCalculations.ts";
 import { calculateInventoryBalances } from "../src/Utilities/inventoryCalculations.ts";
+import "./inventoryCosting.test.mjs";
 
 test("category selection supports all, one, and multiple collections", () => {
     const all = ["batches", "sales", "expenses"];
@@ -26,9 +26,11 @@ test("date and batch filters include matching rows and retain historical batches
 
 test("batch filters trace stock allocations and linked financial transactions", () => {
     const purchase = { id: "p1", allocations: [{ batchId: "b1", cost: 20 }] };
+    const chickPurchase = { id: "chicks-b1", batchId: "b1", itemName: "Chicks · Batch 1" };
     const txn = { id: "t1", sourceId: "p1", date: "2026-03-01" };
     const ids = new Set([purchase.id]);
     assert.equal(filterReportRecords("purchases", [purchase], { batchId: "b1" }).length, 1);
+    assert.equal(filterReportRecords("purchases", [chickPurchase], { batchId: "b1" }).length, 1);
     assert.equal(filterReportRecords("transactions", [txn], { batchId: "b1", relatedBatchRecordIds: ids }).length, 1);
 });
 
@@ -68,12 +70,13 @@ test("financial summary separates cash, revenue, expenses, and inventory purchas
     assert.equal(summary.fixedAssets, 200);
 });
 
-test("broiler day-age stage guidance uses starter through day 14, grower through day 20, then finisher", () => {
+test("broiler day-age stage guidance uses starter through day 14, grower through day 27, then finisher", () => {
     assert.equal(broilerFeedStageForAge(1), "starter");
     assert.equal(broilerFeedStageForAge(14), "starter");
     assert.equal(broilerFeedStageForAge(15), "grower");
     assert.equal(broilerFeedStageForAge(20), "grower");
-    assert.equal(broilerFeedStageForAge(21), "finisher");
+    assert.equal(broilerFeedStageForAge(21), "grower");
+    assert.equal(broilerFeedStageForAge(28), "finisher");
     assert.equal(broilerFeedStageForAge(35), "finisher");
     assert.equal(broilerFeedStageForAge(0), null);
 });

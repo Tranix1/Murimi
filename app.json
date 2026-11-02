@@ -4,35 +4,41 @@
     "slug": "Murimi",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/murimi-icon-light.png",
     "scheme": "murimi",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": {
+        "light": "./assets/images/murimi-icon-light.png",
+        "dark": "./assets/images/murimi-icon-dark.png"
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#F7FBF5",
+        "foregroundImage": "./assets/images/murimi-android-foreground.png",
+        "monochromeImage": "./assets/images/murimi-android-monochrome.png"
       },
       "googleServicesFile": "./google-services.json",
       "predictiveBackGestureEnabled": false,
-      "package": "com.yayapana.Murimi"
+      "package": "com.armament.murimi"
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/murimi-icon-light.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "backgroundColor": "#FFFFFF",
+          "image": "./assets/images/murimi-splash-light.png",
+          "dark": {
+            "backgroundColor": "#000000",
+            "image": "./assets/images/murimi-splash-dark.png"
+          },
+          "imageWidth": 180
         }
       ],
       "@react-native-firebase/app",

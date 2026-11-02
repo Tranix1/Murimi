@@ -199,8 +199,18 @@ export type FarmSupplier = FarmRecord & {
   name: string;
   active: boolean;
 };
+export type FarmAccountInvitation = FarmRecord & {
+  accountNameSnapshot: string;
+  invitedByUid: string;
+  invitedUserId: string | null;
+  invitedPhoneHash: string;
+  status: "pending" | "accepted" | "revoked";
+  role: string | null;
+  acceptedAt?: string;
+};
 export type PurchaseAllocation = { id?: string; batchId: string; batchNameSnapshot?: string; batchNumberSnapshot?: string; quantity?: number; cost?: number; allocatedAt: string };
 export type Purchase = FarmRecord & {
+  batchId?: string;
   itemName: string;
   inventoryItemId?: string;
   category: PurchaseCategory;

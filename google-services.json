@@ -1,21 +1,59 @@
 {
   "project_info": {
-    "project_number": "305766598234",
-    "project_id": "murimi-9a3e7",
-    "storage_bucket": "murimi-9a3e7.firebasestorage.app"
+    "project_number": "853368688021",
+    "project_id": "armament-f5a0b",
+    "storage_bucket": "armament-f5a0b.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:305766598234:android:b5860eb91abaca5114ba63",
+        "mobilesdk_app_id": "1:853368688021:android:bebcddbe0b2564bbb53a9c",
         "android_client_info": {
-          "package_name": "com.yayapana.Murimi"
+          "package_name": "com.armament.fynage"
         }
       },
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyAq-CJ3bLfpHsS7NFus2R6752S6XUzR3O0"
+          "current_key": "AIzaSyDW6CHv887ClF4nVTzGa28vzI9Jd1hqa0Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:853368688021:android:ab93b719098b631cb53a9c",
+        "android_client_info": {
+          "package_name": "com.armament.murimi"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDW6CHv887ClF4nVTzGa28vzI9Jd1hqa0Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:853368688021:android:ea743e90ba910267b53a9c",
+        "android_client_info": {
+          "package_name": "com.armament.tengesa"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDW6CHv887ClF4nVTzGa28vzI9Jd1hqa0Y"
         }
       ],
       "services": {

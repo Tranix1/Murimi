@@ -1,6 +1,5 @@
-import { Platform } from "react-native";
-import * as SQLite from "expo-sqlite";
 import type { FarmCollection } from "@/services/farmRepository";
+import * as SQLite from "expo-sqlite";
 
 export type SyncOperation = "upsert" | "delete" | "batch" | "daily" | "sale" | "slaughter" | "expense" | "payment";
 export type FarmChange = {
@@ -30,7 +29,7 @@ export type QueuedFarmChange = {
 
 const DATABASE_VERSION = 2;
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
-let transactionTail: Promise<void> = Promise.resolve();
+let databaseOperationTail: Promise<void> = Promise.resolve();
 const observers = new Map<string, Set<() => void>>();
 const syncObservers = new Map<string, Set<() => void>>();
 const observerKey = (uid: string, accountId: string, collection: FarmCollection) => `${uid}:${accountId}:${collection}`;
@@ -122,23 +121,25 @@ export function getFarmDatabase(): Promise<SQLite.SQLiteDatabase> {
   return databasePromise;
 }
 
-async function inTransaction<T>(work: (database: SQLite.SQLiteDatabase) => Promise<T>): Promise<T> {
+async function withDatabaseAccess<T>(work: (database: SQLite.SQLiteDatabase) => Promise<T>): Promise<T> {
   const database = await getFarmDatabase();
-  let result: T;
   let release!: () => void;
-  const previous = transactionTail;
-  transactionTail = new Promise<void>((resolve) => { release = resolve; });
+  const previous = databaseOperationTail;
+  databaseOperationTail = new Promise<void>((resolve) => { release = resolve; });
   await previous;
   try {
-    if (Platform.OS === "web") {
-      await database.withTransactionAsync(async () => { result = await work(database); });
-    } else {
-      await database.withExclusiveTransactionAsync(async (transaction) => { result = await work(transaction); });
-    }
+    return await work(database);
   } finally {
     release();
   }
-  return result!;
+}
+
+async function inTransaction<T>(work: (database: SQLite.SQLiteDatabase) => Promise<T>): Promise<T> {
+  return withDatabaseAccess(async (database) => {
+    let result!: T;
+    await database.withTransactionAsync(async () => { result = await work(database); });
+    return result;
+  });
 }
 
 export async function getLocalFarmRecords<T extends Record<string, unknown>>(
@@ -146,12 +147,13 @@ export async function getLocalFarmRecords<T extends Record<string, unknown>>(
   accountId: string,
   collectionName: FarmCollection,
 ): Promise<(T & { id: string })[]> {
-  const database = await getFarmDatabase();
-  const rows = await database.getAllAsync<{ record_id: string; payload: string }>(
-    "SELECT record_id, payload FROM farm_records WHERE uid = ? AND account_id = ? AND collection_name = ? ORDER BY updated_at DESC",
-    uid, accountId, collectionName,
-  );
-  return rows.map((row) => ({ ...JSON.parse(row.payload) as T, id: row.record_id }));
+  return withDatabaseAccess(async (database) => {
+    const rows = await database.getAllAsync<{ record_id: string; payload: string }>(
+      "SELECT record_id, payload FROM farm_records WHERE uid = ? AND account_id = ? AND collection_name = ? ORDER BY updated_at DESC",
+      uid, accountId, collectionName,
+    );
+    return rows.map((row) => ({ ...JSON.parse(row.payload) as T, id: row.record_id }));
+  });
 }
 
 export type FarmRecordFilter = {
@@ -169,34 +171,36 @@ export type FarmRecordFilter = {
 export async function queryLocalFarmRecords<T extends Record<string, unknown>>(
   uid: string, accountId: string, collectionName: FarmCollection, filter: FarmRecordFilter = {},
 ): Promise<(T & { id: string })[]> {
-  const database = await getFarmDatabase();
-  const clauses = ["uid = ?", "account_id = ?", "collection_name = ?"];
-  const params: (string | number)[] = [uid, accountId, collectionName];
-  const fields: (keyof FarmRecordFilter)[] = ["batchId", "customerId", "customerCategoryId", "paymentMethodId", "category", "itemId"];
-  for (const field of fields) {
-    const value = filter[field];
-    if (value === undefined) continue;
-    clauses.push(`json_extract(payload, '$.${field}') = ?`);
-    params.push(value);
-  }
-  if (filter.fromDate) { clauses.push("json_extract(payload, '$.date') >= ?"); params.push(filter.fromDate); }
-  if (filter.toDate) { clauses.push("json_extract(payload, '$.date') <= ?"); params.push(filter.toDate); }
-  const rows = await database.getAllAsync<{ record_id: string; payload: string }>(
-    `SELECT record_id, payload FROM farm_records WHERE ${clauses.join(" AND ")} ORDER BY json_extract(payload, '$.date') DESC, updated_at DESC`,
-    ...params,
-  );
-  return rows.map((row) => ({ ...JSON.parse(row.payload) as T, id: row.record_id }));
+  return withDatabaseAccess(async (database) => {
+    const clauses = ["uid = ?", "account_id = ?", "collection_name = ?"];
+    const params: (string | number)[] = [uid, accountId, collectionName];
+    const fields: (keyof FarmRecordFilter)[] = ["batchId", "customerId", "customerCategoryId", "paymentMethodId", "category", "itemId"];
+    for (const field of fields) {
+      const value = filter[field];
+      if (value === undefined) continue;
+      clauses.push(`json_extract(payload, '$.${field}') = ?`);
+      params.push(value);
+    }
+    if (filter.fromDate) { clauses.push("json_extract(payload, '$.date') >= ?"); params.push(filter.fromDate); }
+    if (filter.toDate) { clauses.push("json_extract(payload, '$.date') <= ?"); params.push(filter.toDate); }
+    const rows = await database.getAllAsync<{ record_id: string; payload: string }>(
+      `SELECT record_id, payload FROM farm_records WHERE ${clauses.join(" AND ")} ORDER BY json_extract(payload, '$.date') DESC, updated_at DESC`,
+      ...params,
+    );
+    return rows.map((row) => ({ ...JSON.parse(row.payload) as T, id: row.record_id }));
+  });
 }
 
 export async function getLocalFarmRecord<T extends Record<string, unknown>>(
   uid: string, accountId: string, collectionName: FarmCollection, id: string,
 ): Promise<(T & { id: string }) | null> {
-  const database = await getFarmDatabase();
-  const row = await database.getFirstAsync<{ payload: string }>(
-    "SELECT payload FROM farm_records WHERE uid = ? AND account_id = ? AND collection_name = ? AND record_id = ?",
-    uid, accountId, collectionName, id,
-  );
-  return row ? { ...JSON.parse(row.payload) as T, id } : null;
+  return withDatabaseAccess(async (database) => {
+    const row = await database.getFirstAsync<{ payload: string }>(
+      "SELECT payload FROM farm_records WHERE uid = ? AND account_id = ? AND collection_name = ? AND record_id = ?",
+      uid, accountId, collectionName, id,
+    );
+    return row ? { ...JSON.parse(row.payload) as T, id } : null;
+  });
 }
 
 export async function commitLocalFarmChanges(uid: string, accountId: string, changes: FarmChange[]): Promise<void> {
@@ -290,12 +294,13 @@ export async function setLocalFarmRecordSynced(uid: string, accountId: string, c
 }
 
 export async function getDueFarmChanges(uid: string, accountId: string, force = false): Promise<QueuedFarmChange[]> {
-  const database = await getFarmDatabase();
-  const rows = await database.getAllAsync<{ operation_id: string; uid: string; account_id: string; collection_name: FarmCollection; record_id: string; operation: SyncOperation; payload: string | null; attempts: number; next_attempt_at: number }>(
-    `SELECT * FROM farm_sync_queue WHERE uid = ? AND account_id = ? ${force ? "" : "AND next_attempt_at <= ?"} ORDER BY created_at ASC, rowid ASC LIMIT 50`,
-    ...(force ? [uid, accountId] : [uid, accountId, Date.now()]),
-  );
-  return rows.map((row) => ({ operationId: row.operation_id, uid: row.uid, accountId: row.account_id, collectionName: row.collection_name, recordId: row.record_id, operation: row.operation, record: row.payload ? JSON.parse(row.payload) : null, attempts: row.attempts, nextAttemptAt: row.next_attempt_at }));
+  return withDatabaseAccess(async (database) => {
+    const rows = await database.getAllAsync<{ operation_id: string; uid: string; account_id: string; collection_name: FarmCollection; record_id: string; operation: SyncOperation; payload: string | null; attempts: number; next_attempt_at: number }>(
+      `SELECT * FROM farm_sync_queue WHERE uid = ? AND account_id = ? ${force ? "" : "AND next_attempt_at <= ?"} ORDER BY created_at ASC, rowid ASC LIMIT 50`,
+      ...(force ? [uid, accountId] : [uid, accountId, Date.now()]),
+    );
+    return rows.map((row) => ({ operationId: row.operation_id, uid: row.uid, accountId: row.account_id, collectionName: row.collection_name, recordId: row.record_id, operation: row.operation, record: row.payload ? JSON.parse(row.payload) : null, attempts: row.attempts, nextAttemptAt: row.next_attempt_at }));
+  });
 }
 
 export async function recordFarmSyncFailure(operationIdValue: string, message: string, errorKind: string): Promise<void> {
@@ -311,12 +316,13 @@ export async function recordFarmSyncFailure(operationIdValue: string, message: s
 }
 
 export async function getFarmSyncSummary(uid: string, accountId: string) {
-  const database = await getFarmDatabase();
-  const pending = await database.getFirstAsync<{ count: number }>("SELECT COUNT(*) AS count FROM farm_sync_queue WHERE uid=? AND account_id=?", uid, accountId);
-  const failed = await database.getFirstAsync<{ count: number }>("SELECT COUNT(*) AS count FROM farm_sync_queue WHERE uid=? AND account_id=? AND last_error IS NOT NULL", uid, accountId);
-  const lastError = await database.getFirstAsync<{ last_error: string }>("SELECT last_error FROM farm_sync_queue WHERE uid=? AND account_id=? AND last_error IS NOT NULL ORDER BY created_at ASC LIMIT 1", uid, accountId);
-  const lastSync = await database.getFirstAsync<{ last_synced_at: string | null }>("SELECT last_synced_at FROM farm_sync_metadata WHERE uid=? AND account_id=?", uid, accountId);
-  return { pendingCount: pending?.count ?? 0, failedCount: failed?.count ?? 0, lastError: lastError?.last_error ?? null, lastSyncedAt: lastSync?.last_synced_at ?? null };
+  return withDatabaseAccess(async (database) => {
+    const pending = await database.getFirstAsync<{ count: number }>("SELECT COUNT(*) AS count FROM farm_sync_queue WHERE uid=? AND account_id=?", uid, accountId);
+    const failed = await database.getFirstAsync<{ count: number }>("SELECT COUNT(*) AS count FROM farm_sync_queue WHERE uid=? AND account_id=? AND last_error IS NOT NULL", uid, accountId);
+    const lastError = await database.getFirstAsync<{ last_error: string }>("SELECT last_error FROM farm_sync_queue WHERE uid=? AND account_id=? AND last_error IS NOT NULL ORDER BY created_at ASC LIMIT 1", uid, accountId);
+    const lastSync = await database.getFirstAsync<{ last_synced_at: string | null }>("SELECT last_synced_at FROM farm_sync_metadata WHERE uid=? AND account_id=?", uid, accountId);
+    return { pendingCount: pending?.count ?? 0, failedCount: failed?.count ?? 0, lastError: lastError?.last_error ?? null, lastSyncedAt: lastSync?.last_synced_at ?? null };
+  });
 }
 
 export async function setFarmLastSyncedAt(uid: string, accountId: string): Promise<void> {
@@ -349,8 +355,7 @@ export async function deleteLocalFarmRecord(uid: string, accountId: string, coll
 
 /** Removes all farm rows and pending sync data belonging to a user after server deletion succeeds. */
 export async function purgeLocalFarmUser(uid: string): Promise<void> {
-  const database = await getFarmDatabase();
-  const rows = await database.getAllAsync<{ account_id: string; collection_name: FarmCollection }>("SELECT DISTINCT account_id, collection_name FROM farm_records WHERE uid=?", uid);
+  const rows = await withDatabaseAccess((database) => database.getAllAsync<{ account_id: string; collection_name: FarmCollection }>("SELECT DISTINCT account_id, collection_name FROM farm_records WHERE uid=?", uid));
   await inTransaction(async (transaction) => {
     await transaction.runAsync("DELETE FROM farm_sync_queue WHERE uid=?", uid);
     await transaction.runAsync("DELETE FROM farm_records WHERE uid=?", uid);
@@ -362,11 +367,10 @@ export async function purgeLocalFarmUser(uid: string): Promise<void> {
 
 /** Removes one account's farm rows and pending writes after its cloud data is deleted. */
 export async function purgeLocalFarmAccount(uid: string, accountId: string): Promise<void> {
-  const database = await getFarmDatabase();
-  const rows = await database.getAllAsync<{ collection_name: FarmCollection }>(
+  const rows = await withDatabaseAccess((database) => database.getAllAsync<{ collection_name: FarmCollection }>(
     "SELECT DISTINCT collection_name FROM farm_records WHERE uid=? AND account_id=? UNION SELECT DISTINCT collection_name FROM farm_sync_queue WHERE uid=? AND account_id=?",
     uid, accountId, uid, accountId,
-  );
+  ));
   await inTransaction(async (transaction) => {
     await transaction.runAsync("DELETE FROM farm_sync_queue WHERE uid=? AND account_id=?", uid, accountId);
     await transaction.runAsync("DELETE FROM farm_records WHERE uid=? AND account_id=?", uid, accountId);

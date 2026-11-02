@@ -41,13 +41,13 @@ export default function BatchDetailsScreen() {
   const batchSlaughter = slaughter.filter((record) => record.batchId === batch.id);
   const batchMortality = mortalityRecords.filter((record) => record.batchId === batch.id).sort((a, b) => b.date.localeCompare(a.date));
   const batchProblems = problems.filter((record) => record.batchId === batch.id).sort((a, b) => b.date.localeCompare(a.date));
-  const batchPurchases = purchases.filter((purchase) => purchase.allocations.some((allocation) => allocation.batchId === batch.id));
+  const batchPurchases = purchases.filter((purchase) => purchase.batchId === batch.id || purchase.allocations.some((allocation) => allocation.batchId === batch.id));
   const batchStockEvents = stockMovements.filter((movement) => movement.batchId === batch.id && ["allocated", "consumed", "wasted", "returned"].includes(movement.type)).sort((a, b) => b.date.localeCompare(a.date));
   const summary = calculateBatchSummary(batch, batchDaily, batchExpenses, batchSales, batchWeights, batchSlaughter, purchases, stockMovements);
   const mortalityAnalytics = calculateMortalityAnalytics(batchMortality, batch.initialQuantity);
   const ageDays = batch.historical ? null : calculateBatchAgeDays(batch.dateStarted);
   const productionStage = ageDays == null || batch.status === "completed" || batch.status === "archived" ? null : batchProductionStageForAge(ageDays);
-  const stageColor = productionStage ? stageColors[productionStage] : muted;
+  const stageColor = muted;
   const chickQuantity = batch.paidQuantity ?? batch.initialQuantity;
   const chickCost = batch.historical ? batch.historicalData?.chicksCost : (batch.costPerUnit ?? 0) * chickQuantity;
   const expectedRevenue = batch.expectedSellingPrice == null ? null : summary.birdsAlive * batch.expectedSellingPrice;
@@ -95,7 +95,7 @@ export default function BatchDetailsScreen() {
           <ThemedText type="tiny" color={accent} style={styles.status}>{batch.status.replace("_", " ")}</ThemedText>
         </View>
 
-        {productionStage ? <View style={[styles.stageBadge, { backgroundColor: `${stageColor}18`, borderColor: `${stageColor}66` }]}><View style={[styles.stageDot, { backgroundColor: stageColor }]} /><ThemedText type="tiny" color={stageColor}>{batchProductionStageLabel(productionStage)} · Day {ageDays}</ThemedText></View> : null}
+        {productionStage ? <ThemedText type="tiny" color={stageColor} style={styles.stageLabel}>{batchProductionStageLabel(productionStage)} · Day {ageDays}</ThemedText> : null}
         {productionStage === "ready_to_sell" && batch.status === "growing" ? <ThemedText type="tiny" color={stageColor} style={styles.readyNote}>This flock is past Day 35. Mark it as selling when you are ready to start recording sales.</ThemedText> : null}
         <View style={[styles.hero, { backgroundColor: accent }]}>
           <ThemedText type="tiny" style={styles.heroLabel}>Birds currently alive</ThemedText>
@@ -152,8 +152,8 @@ export default function BatchDetailsScreen() {
         {batchProblems.slice(0, 8).map((entry) => <View key={entry.id} style={[styles.record, { backgroundColor: surface, borderColor: border }]}><ThemedText type="defaultSemiBold">{entry.customCategory ?? entry.category.replaceAll("_", " ")} · {entry.severity ?? "severity unknown"}</ThemedText><ThemedText type="tiny" color={muted}>{entry.date} · {entry.description}</ThemedText>{entry.actionTaken ? <ThemedText type="tiny" color={muted}>Action: {entry.actionTaken}</ThemedText> : null}{entry.outcome ? <ThemedText type="tiny" color={muted}>Outcome: {entry.outcome}</ThemedText> : null}</View>)}
         {!batchProblems.length && <ThemedText type="tiny" color={muted} style={styles.emptyHint}>No problem or observation notes recorded.</ThemedText>}
 
-        <View style={styles.sectionHeader}><SectionTitle title="Purchases" /><ThemedText type="tiny" color={muted}>{batchPurchases.length + (chickCost != null && chickCost > 0 ? 1 : 0)} entries</ThemedText></View>
-        {chickCost != null && chickCost > 0 ? <View style={[styles.record, { backgroundColor: surface, borderColor: border }]}><ThemedText type="defaultSemiBold">Chicks · initial batch purchase</ThemedText><ThemedText type="tiny" color={muted}>{chickQuantity.toLocaleString()} birds · {money(chickCost)} total · {money(chickCost / Math.max(1, chickQuantity))} per bird{batch.supplier ? ` · ${batch.supplier}` : ""}</ThemedText></View> : null}
+        <View style={styles.sectionHeader}><SectionTitle title="Purchases" /><ThemedText type="tiny" color={muted}>{batchPurchases.length + (chickCost != null && chickCost > 0 && !batchPurchases.some((purchase) => purchase.category === "chicks") ? 1 : 0)} entries</ThemedText></View>
+        {chickCost != null && chickCost > 0 && !batchPurchases.some((purchase) => purchase.category === "chicks") ? <View style={[styles.record, { backgroundColor: surface, borderColor: border }]}><ThemedText type="defaultSemiBold">Chicks · initial batch purchase</ThemedText><ThemedText type="tiny" color={muted}>{chickQuantity.toLocaleString()} birds · {money(chickCost)} total · {money(chickCost / Math.max(1, chickQuantity))} per bird{batch.supplier ? ` · ${batch.supplier}` : ""}</ThemedText></View> : null}
         {batchPurchases.slice(0, 5).map((purchase) => <View key={purchase.id} style={[styles.record, { backgroundColor: surface, borderColor: border }]}><ThemedText type="defaultSemiBold">{purchase.itemName}</ThemedText><ThemedText type="tiny" color={muted}>{purchase.date} · {purchase.category} · {money(purchase.totalCost)}</ThemedText></View>)}
         {!batchPurchases.length && !(chickCost != null && chickCost > 0) && <ThemedText type="tiny" color={muted} style={styles.emptyHint}>No purchases allocated to this batch.</ThemedText>}
 
@@ -215,8 +215,7 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: 17, paddingBottom: 28 },
   subtitleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 12 },
   status: { textTransform: "capitalize", fontWeight: "700" },
-  stageBadge: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 7, borderWidth: 1, borderRadius: 15, paddingHorizontal: 10, paddingVertical: 6, marginBottom: 12 },
-  stageDot: { width: 8, height: 8, borderRadius: 4 },
+  stageLabel: { paddingBottom: 12 },
   readyNote: { paddingBottom: 12, lineHeight: 18 },
   hero: { borderRadius: 18, padding: 18, marginBottom: 14, gap: 3 },
   heroLabel: { color: "#FFFFFFD8" },
@@ -238,4 +237,3 @@ const styles = StyleSheet.create({
   white: { color: "#FFFFFF", fontWeight: "700" },
 });
 
-const stageColors = { starter: "#A16207", growing: "#087E8B", finishing: "#C2410C", ready_to_sell: "#15803D" };

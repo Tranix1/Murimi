@@ -46,7 +46,7 @@ export default function ReportsScreen() {
         try { setLoaded(await loadFarmReportDataset(user.uid, activeAccountId)); }
         catch (error) { setLoaded({ data: {}, failures: { batches: error instanceof Error ? error.message : "Could not load local farm reports." } }); }
         finally { setLoading(false); }
-    }, [user?.uid, activeAccountId]);
+    }, [user, activeAccountId]);
 
     /* eslint react-hooks/set-state-in-effect: "off" -- refresh the offline report snapshot when the signed-in account changes. */
     useFocusEffect(useCallback(() => { void reload(); }, [reload]));

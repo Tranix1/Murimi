@@ -1,6 +1,9 @@
 import { Stack } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
 import { AuthProvider } from "@/context/AuthContext";
 import { FarmSyncProvider } from "@/context/FarmSyncContext";
+
+SplashScreen.setOptions({ duration: 500, fade: true });
 
 export default function RootLayout() {
   return (

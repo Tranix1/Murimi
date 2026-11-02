@@ -93,11 +93,10 @@ export default function Home() {
           const age = batch.historical ? null : calculateBatchAgeDays(batch.dateStarted);
           const closed = batch.status === "completed" || batch.status === "archived";
           const stage = age == null || closed ? null : batchProductionStageForAge(age);
-          const stageColor = stage ? stageColors[stage] : accent;
-          return <TouchableOpacity key={batch.id} activeOpacity={0.8} onPress={() => router.push({ pathname: "/Batches/BatchDetails" as never, params: { batchId: batch.id } })} style={[styles.batchCard, { backgroundColor: stage ? `${stageColor}0B` : surface, borderColor: stage ? `${stageColor}88` : border }]}>
-            <View style={[styles.batchIcon, { backgroundColor: `${stageColor}18` }]}><Ionicons name="leaf-outline" size={20} color={stageColor} /></View>
+          return <TouchableOpacity key={batch.id} activeOpacity={0.8} onPress={() => router.push({ pathname: "/Batches/BatchDetails" as never, params: { batchId: batch.id } })} style={[styles.batchCard, { backgroundColor: surface, borderColor: border }]}>
+            <View style={[styles.batchIcon, { backgroundColor: `${accent}18` }]}><Ionicons name="leaf-outline" size={20} color={accent} /></View>
             <View style={styles.flex}><ThemedText type="defaultSemiBold" color={text}>{batch.name} · Batch {batch.batchNumber ?? batch.id}</ThemedText><ThemedText type="tiny" color={muted}>{batch.enterprise} · {batch.stockType} · {summary.birdsAlive.toLocaleString()} alive{age == null ? "" : ` · Day ${age}${stage ? ` · ${batchProductionStageLabel(stage)}` : ""}`}</ThemedText></View>
-            <View style={styles.batchEnd}><ThemedText type="tiny" color={stageColor}>{batch.status.replace("_", " ")}</ThemedText><Ionicons name="chevron-forward" size={16} color={muted} /></View>
+            <View style={styles.batchEnd}><ThemedText type="tiny" color={muted}>{batch.status.replace("_", " ")}</ThemedText><Ionicons name="chevron-forward" size={16} color={muted} /></View>
           </TouchableOpacity>;
         })}
 
@@ -138,4 +137,3 @@ const styles = StyleSheet.create({
   quickActions: { flexDirection: "row", flexWrap: "wrap", gap: 9, marginBottom: 24 }, quickAction: { flexBasis: "48%", flexGrow: 1, borderWidth: 1, borderRadius: 14, minHeight: 76, alignItems: "center", justifyContent: "center", gap: 7 }, planRow: { borderWidth: 1, borderRadius: 14, padding: 11, flexDirection: "row", alignItems: "center", gap: 11, marginBottom: 8 }, planDate: { minWidth: 48, height: 40, borderRadius: 12, alignItems: "center", justifyContent: "center" }, noPlans: { paddingVertical: 6, marginBottom: 12 },
 });
 
-const stageColors = { starter: "#A16207", growing: "#087E8B", finishing: "#C2410C", ready_to_sell: "#15803D" };

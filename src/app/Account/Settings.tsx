@@ -4,10 +4,11 @@ import { ThemedText } from "@/components/ThemedText";
 import { FarmSyncStatus } from "@/components/farm/FarmSyncStatus";
 import { useAuth } from "@/context/AuthContext";
 import { useThemeColor } from "@/hooks/useThemeColor";
-import { purgeLocalFarmUser } from "@/services/farmLocalDatabase";
+import { purgeLocalFarmAccount, purgeLocalFarmUser } from "@/services/farmLocalDatabase";
 import { deleteMurimiFarmAccount, finishMurimiFarmAccountDeletion, requestMurimiAccountDeletion } from "@/services/farmRepository";
-import { getAuth, getIdToken, PhoneAuthProvider, reauthenticateWithCredential, signInWithPhoneNumber } from "@react-native-firebase/auth";
+import { callArmament } from "@/services/armamentApi";
 import { Ionicons } from "@expo/vector-icons";
+import { getAuth, getIdToken, PhoneAuthProvider, reauthenticateWithCredential, signInWithPhoneNumber } from "@react-native-firebase/auth";
 import { router } from "expo-router";
 import { useState } from "react";
 import { Alert, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from "react-native";
@@ -22,6 +23,9 @@ export default function AccountSettingsScreen() {
   const [error, setError] = useState("");
   const [showAccountNameInput, setShowAccountNameInput] = useState(false);
   const [newAccountName, setNewAccountName] = useState("");
+  const [invitePhone, setInvitePhone] = useState("");
+  const [inviteRole, setInviteRole] = useState<"employee" | "investor">("employee");
+  const [notice, setNotice] = useState("");
   const accent = useThemeColor("accent"); const danger = useThemeColor("bad"); const border = useThemeColor("border"); const surface = useThemeColor("backgroundLight"); const text = useThemeColor("text"); const muted = useThemeColor("textlight"); const inputBackground = useThemeColor("background");
 
   const logout = async () => {
@@ -58,29 +62,67 @@ export default function AccountSettingsScreen() {
     } finally { setBusy(false); }
   };
 
+  const createInvite = async () => {
+    const phoneNumber = invitePhone.trim();
+    if (busy) return;
+    if (!user?.uid || !activeAccountId) { setError("Select a farm account first."); return; }
+    if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) { setError("Enter the phone number in international format, such as +263771234567."); return; }
+    const currentUser = getAuth().currentUser;
+    if (!currentUser) { setError("Sign in again before creating an invitation."); return; }
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const business = await callArmament<{ businessId: string }>("registerArmamentBusiness", { sourceApp: "murimi", sourceId: activeAccountId });
+      await callArmament("inviteArmamentMember", { businessId: business.businessId, phoneNumber, role: inviteRole });
+      setInvitePhone("");
+      setNotice("Invitation sent. The recipient must accept before access is granted.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not create invitation.");
+    } finally { setBusy(false); }
+  };
+
   const confirmDeleteFarmAccount = (accountId: string, accountName: string) => Alert.alert(
     `Delete ${accountName}?`,
     `This permanently removes ${accountName} and its farm records from this device and Murimi cloud storage. Your other farm accounts will remain.`,
     [
       { text: "Cancel", style: "cancel" },
-      { text: "Delete account", style: "destructive", onPress: () => void (async () => {
-        if (!user?.uid) return;
-        setBusy(true); setError("");
-        let cloudDeleted = false;
-        try {
-          const currentUser = getAuth().currentUser;
-          if (!currentUser) throw new Error("Sign in again before deleting a farm account.");
-          const token = await getIdToken(currentUser, true);
-          await deleteMurimiFarmAccount(user.uid, accountId, token);
-          cloudDeleted = true;
-          if (!await removeFarmAccount(accountId)) throw new Error("The cloud data was deleted, but the account list could not be updated on this device.");
-        } catch (cause) {
-          setError(cause instanceof Error ? cause.message : "Could not delete this farm account. Its local data was kept if cloud deletion failed.");
-        } finally {
-          if (cloudDeleted) finishMurimiFarmAccountDeletion(user.uid, accountId);
-          setBusy(false);
-        }
-      })() },
+      {
+        text: "Delete account", style: "destructive", onPress: () => void (async () => {
+          if (!user?.uid) return;
+          setBusy(true); setError("");
+          let cloudDeleted = false;
+          let failureMessage = "";
+          let successMessage = "";
+          try {
+            const currentUser = getAuth().currentUser;
+            if (!currentUser) throw new Error("Sign in again before deleting a farm account.");
+            const token = await getIdToken(currentUser, true);
+            await deleteMurimiFarmAccount(user.uid, accountId, token);
+            cloudDeleted = true;
+            if (!await removeFarmAccount(accountId)) {
+              failureMessage = "The farm account was deleted from Murimi cloud storage, but this device could not update its account list. Close and reopen Murimi to refresh it.";
+            } else {
+              successMessage = `${accountName} and its farm records were deleted. Your Murimi login and other farm accounts were kept.`;
+            }
+          } catch (cause) {
+            failureMessage = cause instanceof Error ? cause.message : "Could not delete this farm account. No local account data was removed.";
+            setError(failureMessage);
+          } finally {
+            if (cloudDeleted) {
+              finishMurimiFarmAccountDeletion(user.uid, accountId);
+              try { await purgeLocalFarmAccount(user.uid, accountId); }
+              catch (cause) {
+                const cleanupMessage = cause instanceof Error ? cause.message : "Local farm data could not be fully cleared.";
+                const message = `The account was deleted, but some cached records could not be cleared: ${cleanupMessage}`;
+                setError(message);
+                successMessage = "The account was deleted, but this device could not clear all cached records. Restart Murimi and check the account list.";
+              }
+            }
+            setBusy(false);
+          }
+          if (failureMessage) Alert.alert("Farm account not fully removed", failureMessage);
+          else if (successMessage) Alert.alert("Farm account deleted", successMessage);
+        })()
+      },
     ],
   );
 
@@ -156,6 +198,14 @@ export default function AccountSettingsScreen() {
         {accounts.length < 10 ? <TouchableOpacity disabled={busy} onPress={() => void addAccount()} style={[styles.addAccount, { backgroundColor: accent, opacity: busy ? 0.6 : 1 }]}><Ionicons name="add-circle-outline" size={19} color="#fff" /><ThemedText type="defaultSemiBold" style={styles.addAccountText}>Add account</ThemedText></TouchableOpacity> : <ThemedText type="tiny" color={muted}>Maximum of 10 accounts reached.</ThemedText>}
         {showAccountNameInput ? <View style={styles.newAccountForm}><TextInput value={newAccountName} onChangeText={setNewAccountName} maxLength={40} autoFocus placeholder="Enter account name" placeholderTextColor={muted} style={[styles.codeInput, { color: text, borderColor: border, backgroundColor: inputBackground, letterSpacing: 0 }]} /><View style={styles.verifyActions}><TouchableOpacity disabled={busy} onPress={() => { setShowAccountNameInput(false); setNewAccountName(""); }} style={[styles.cancel, { borderColor: border }]}><ThemedText type="tiny" color={text}>Cancel</ThemedText></TouchableOpacity><TouchableOpacity disabled={busy} onPress={() => void saveNewAccount()} style={[styles.addAccount, styles.createAccountButton, { backgroundColor: accent, opacity: busy ? 0.6 : 1 }]}><ThemedText type="defaultSemiBold" style={styles.addAccountText}>{busy ? "Saving…" : "Create account"}</ThemedText></TouchableOpacity></View></View> : null}
       </View>
+      <View style={[styles.inviteCard, { backgroundColor: surface, borderColor: border }]}>
+        <ThemedText type="defaultSemiBold" color={text}>Invite someone</ThemedText>
+        <ThemedText type="tiny" color={muted}>Invite a registered Armament user to {activeAccountName ?? "the selected farm account"}. Access begins only after they accept.</ThemedText>
+        <TextInput value={invitePhone} onChangeText={setInvitePhone} keyboardType="phone-pad" autoComplete="tel" placeholder="+263771234567" placeholderTextColor={muted} style={[styles.invitePhoneInput, { color: text, borderColor: border, backgroundColor: inputBackground }]} />
+        <TouchableOpacity disabled={busy} onPress={() => setInviteRole((role) => role === "employee" ? "investor" : "employee")} style={[styles.accountRow, { borderColor: border }]}><ThemedText type="tiny" color={text}>Role: {inviteRole} · tap to change</ThemedText></TouchableOpacity>
+        <TouchableOpacity disabled={busy} onPress={() => void createInvite()} style={[styles.addAccount, { backgroundColor: accent, opacity: busy ? 0.6 : 1 }]}><Ionicons name="person-add-outline" size={18} color="#fff" /><ThemedText type="defaultSemiBold" style={styles.addAccountText}>{busy ? "Working…" : "Create invitation"}</ThemedText></TouchableOpacity>
+        {notice ? <ThemedText type="tiny" color={accent}>{notice}</ThemedText> : null}
+      </View>
       <TouchableOpacity disabled={busy} onPress={() => void logout()} style={[styles.action, { backgroundColor: surface, borderColor: border, opacity: busy ? 0.6 : 1 }]}><Ionicons name="log-out-outline" size={21} color={accent} /><View style={styles.copy}><ThemedText type="defaultSemiBold" color={text}>Log out</ThemedText><ThemedText type="tiny" color={muted}>Sign out; keep cloud and local farm records</ThemedText></View><Ionicons name="chevron-forward" size={18} color={muted} /></TouchableOpacity>
       <View style={[styles.dangerCard, { backgroundColor: surface, borderColor: danger }]}>
         <ThemedText type="defaultSemiBold" color={text}>Delete Murimi account</ThemedText>
@@ -171,4 +221,4 @@ export default function AccountSettingsScreen() {
   </ScreenWrapper>;
 }
 
-const styles = StyleSheet.create({ content: { padding: 18, paddingBottom: 30, gap: 12 }, profile: { alignItems: "center", gap: 6, padding: 20, borderWidth: 1, borderRadius: 16, marginBottom: 4 }, avatar: { width: 58, height: 58, borderRadius: 29, alignItems: "center", justifyContent: "center", marginBottom: 5 }, action: { minHeight: 70, borderWidth: 1, borderRadius: 14, padding: 13, flexDirection: "row", alignItems: "center", gap: 12 }, accountsCard: { borderWidth: 1, borderRadius: 14, padding: 14, gap: 9 }, accountRow: { minHeight: 56, borderWidth: 1, borderRadius: 10, paddingHorizontal: 11, flexDirection: "row", alignItems: "center", gap: 10 }, accountSelect: { flex: 1, minHeight: 54, flexDirection: "row", alignItems: "center", gap: 10 }, deleteAccountIcon: { padding: 8 }, addAccount: { minHeight: 46, borderRadius: 10, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 }, addAccountText: { color: "#fff" }, newAccountForm: { gap: 9, paddingTop: 4 }, createAccountButton: { flex: 2 }, copy: { flex: 1, gap: 3 }, dangerCard: { borderWidth: 1, borderRadius: 14, padding: 14, gap: 9, marginTop: 12 }, delete: { minHeight: 44, borderRadius: 10, alignItems: "center", justifyContent: "center", marginTop: 3, paddingHorizontal: 14 }, deleteText: { color: "#fff" }, verifyBox: { gap: 9 }, codeInput: { minHeight: 46, borderWidth: 1, borderRadius: 9, paddingHorizontal: 12, fontSize: 18, letterSpacing: 3 }, verifyActions: { flexDirection: "row", gap: 9 }, cancel: { flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center", borderWidth: 1, borderRadius: 10 }, verifyDelete: { flex: 2 }, });
+const styles = StyleSheet.create({ content: { padding: 18, paddingBottom: 30, gap: 12 }, profile: { alignItems: "center", gap: 6, padding: 20, borderWidth: 1, borderRadius: 16, marginBottom: 4 }, avatar: { width: 58, height: 58, borderRadius: 29, alignItems: "center", justifyContent: "center", marginBottom: 5 }, action: { minHeight: 70, borderWidth: 1, borderRadius: 14, padding: 13, flexDirection: "row", alignItems: "center", gap: 12 }, accountsCard: { borderWidth: 1, borderRadius: 14, padding: 14, gap: 9 }, inviteCard: { borderWidth: 1, borderRadius: 14, padding: 14, gap: 9 }, invitePhoneInput: { minHeight: 46, borderWidth: 1, borderRadius: 9, paddingHorizontal: 12, fontSize: 16 }, accountRow: { minHeight: 56, borderWidth: 1, borderRadius: 10, paddingHorizontal: 11, flexDirection: "row", alignItems: "center", gap: 10 }, accountSelect: { flex: 1, minHeight: 54, flexDirection: "row", alignItems: "center", gap: 10 }, deleteAccountIcon: { padding: 8 }, addAccount: { minHeight: 46, borderRadius: 10, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 }, addAccountText: { color: "#fff" }, newAccountForm: { gap: 9, paddingTop: 4 }, createAccountButton: { flex: 2 }, copy: { flex: 1, gap: 3 }, dangerCard: { borderWidth: 1, borderRadius: 14, padding: 14, gap: 9, marginTop: 12 }, delete: { minHeight: 44, borderRadius: 10, alignItems: "center", justifyContent: "center", marginTop: 3, paddingHorizontal: 14 }, deleteText: { color: "#fff" }, verifyBox: { gap: 9 }, codeInput: { minHeight: 46, borderWidth: 1, borderRadius: 9, paddingHorizontal: 12, fontSize: 18, letterSpacing: 3 }, verifyActions: { flexDirection: "row", gap: 9 }, cancel: { flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center", borderWidth: 1, borderRadius: 10 }, verifyDelete: { flex: 2 }, });

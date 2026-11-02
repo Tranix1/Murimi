@@ -46,6 +46,8 @@ export default function CreateBatchScreen() {
   const [newQuickCategoryName, setNewQuickCategoryName] = useState(""); const [newQuickItemName, setNewQuickItemName] = useState(""); const [newQuickItemUnit, setNewQuickItemUnit] = useState("kg");
   const [savingQuickCategory, setSavingQuickCategory] = useState(false); const [savingQuickItem, setSavingQuickItem] = useState(false);
   const [quickQuantity, setQuickQuantity] = useState(""); const [quickAmountPerItem, setQuickAmountPerItem] = useState(""); const [quickUnitPrice, setQuickUnitPrice] = useState(""); const [quickAllocation, setQuickAllocation] = useState(""); const [quickNotes, setQuickNotes] = useState(""); const [quickPaid, setQuickPaid] = useState(true);
+  const [quickSupplierId, setQuickSupplierId] = useState(""); const [quickSupplierName, setQuickSupplierName] = useState(""); const [newQuickSupplierName, setNewQuickSupplierName] = useState(""); const [savingQuickSupplier, setSavingQuickSupplier] = useState(false);
+  const [chickAmountPaid, setChickAmountPaid] = useState("");
   const [quickLines, setQuickLines] = useState<QuickPurchaseLine[]>([]); const [createdBatchId, setCreatedBatchId] = useState("");
   const [duration, setDuration] = useState("");
   const [expectedSaleDate, setExpectedSaleDate] = useState("");
@@ -68,6 +70,19 @@ export default function CreateBatchScreen() {
   const quickPackageSize = quickUsesPackages ? Number(quickAmountPerItem) : 1;
   const quickReceivedQuantity = (Number(quickQuantity) || 0) * (Number.isFinite(quickPackageSize) ? quickPackageSize : 0);
   const quickPricePerUnit = quickPackageSize > 0 ? (Number(quickUnitPrice) || 0) / quickPackageSize : 0;
+
+  const addQuickSupplier = async () => {
+    const supplierName = newQuickSupplierName.trim();
+    if (!user?.uid || !activeAccountId) return setError("Select a farm account first.");
+    if (!supplierName) return setError("Enter a supplier name first.");
+    setSavingQuickSupplier(true); setError(null);
+    try {
+      const existing = suppliers.find((entry) => entry.active && entry.name.trim().toLocaleLowerCase() === supplierName.toLocaleLowerCase());
+      const id = existing?.id ?? await createFarmRecord(user.uid, activeAccountId, "suppliers", { name: supplierName, active: true });
+      setQuickSupplierId(id); setQuickSupplierName(existing?.name ?? supplierName); setNewQuickSupplierName("");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save supplier."); }
+    finally { setSavingQuickSupplier(false); }
+  };
 
   const addQuickCategory = async () => {
     const categoryName = newQuickCategoryName.trim();
@@ -103,7 +118,7 @@ export default function CreateBatchScreen() {
     const qty = packageCount * amountPerItem; const unitPrice = amountPerItem > 0 ? pricePerPackage / amountPerItem : 0; const allocated = quickAllocation.trim() ? Number(quickAllocation) : qty;
     if (!quickItem) return setError("Select a saved consumable inventory item.");
     if (!Number.isFinite(packageCount) || packageCount <= 0 || !Number.isFinite(amountPerItem) || amountPerItem <= 0 || !Number.isFinite(pricePerPackage) || pricePerPackage <= 0 || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(allocated) || allocated < 0 || allocated > qty) return setError("Enter package count, amount per package, and price per package. Allocation must be between zero and the total received quantity.");
-    setQuickLines((previous) => [...previous, { key: `qp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`, itemId: quickItem.id, itemName: quickItem.name, categoryId: quickItem.categoryId, category: quickItem.category, unit: quickItem.baseUnit, quantity: qty, unitPrice, packageCount, amountPerItem, pricePerItem: pricePerPackage, allocationQuantity: allocated, paid: quickPaid, notes: quickNotes.trim() || undefined }]);
+    setQuickLines((previous) => [...previous, { key: `qp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`, itemId: quickItem.id, itemName: quickItem.name, categoryId: quickItem.categoryId, category: quickItem.category, unit: quickItem.baseUnit, quantity: qty, unitPrice, packageCount, amountPerItem, pricePerItem: pricePerPackage, allocationQuantity: allocated, paid: quickPaid, supplierId: quickSupplierId || supplierId, supplierName: quickSupplierName || supplier.trim() || undefined, notes: quickNotes.trim() || undefined }]);
     setQuickItemId(""); setQuickQuantity(""); setQuickAmountPerItem(""); setQuickUnitPrice(""); setQuickAllocation(""); setQuickNotes(""); setError(null);
   };
 
@@ -136,6 +151,22 @@ export default function CreateBatchScreen() {
     const paidBirds = optionalNumber(paidQuantity);
     if (paidBirds !== undefined && (!Number.isInteger(paidBirds) || paidBirds < 0)) {
       setError("Birds paid for must be a whole number, zero or greater.");
+      return;
+    }
+    const chickCost = optionalNumber(costPerUnit);
+    const chickQuantity = paidBirds ?? initialQuantity;
+    const chickTotal = chickQuantity * (chickCost ?? 0);
+    const chickPaid = optionalNumber(chickAmountPaid);
+    if (enterprise === "broiler" && (chickCost === undefined || !Number.isFinite(chickCost) || chickCost <= 0)) {
+      setError("Enter a chick purchase cost per bird greater than zero.");
+      return;
+    }
+    if (enterprise === "broiler" && (!Number.isInteger(chickQuantity) || chickQuantity <= 0)) {
+      setError("Enter at least one bird paid for.");
+      return;
+    }
+    if (chickPaid !== undefined && (!Number.isFinite(chickPaid) || chickPaid < 0 || chickPaid > chickTotal)) {
+      setError("Amount paid for chicks must be between zero and the chick purchase total.");
       return;
     }
     const optionalFields = [costPerUnit, duration, targetWeight, expectedPrice, plannedFeed, initialAverageWeight]
@@ -196,9 +227,21 @@ export default function CreateBatchScreen() {
           pricePerItem: line.pricePerItem, unitPrice: line.unitPrice,
           totalCost: Math.round(line.packageCount * line.pricePerItem * 100) / 100, amountPaid: line.paid ? Math.round(line.packageCount * line.pricePerItem * 100) / 100 : 0,
           fullyPaid: line.paid, outstanding: line.paid ? 0 : Math.round(line.packageCount * line.pricePerItem * 100) / 100,
+          supplier: line.supplierName, supplierId: line.supplierId,
           receiptStatus: "received",
           batchId: line.allocationQuantity > 0 ? id : undefined, allocationQuantity: line.allocationQuantity,
           notes: line.notes, idempotencyKey: `${id}_${line.key}`,
+        });
+      }
+      if (enterprise === "broiler" && chickCost !== undefined) {
+        await savePurchase(user.uid, activeAccountId, {
+          itemName: `Chicks · ${name.trim()}`, category: "chicks", categoryNameSnapshot: "Chicks",
+          itemType: "other", inventoryTracked: false, financialClassification: "operating_expense",
+          date: dateStarted, quantity: chickQuantity, unit: "birds", itemCount: chickQuantity,
+          pricePerItem: chickCost, totalCost: Math.round(chickTotal * 100) / 100,
+          amountPaid: chickPaid, fullyPaid: chickPaid != null && chickPaid >= chickTotal,
+          receiptStatus: "received", supplier: supplier.trim() || undefined, supplierId: linkedSupplierId,
+          batchId: id, idempotencyKey: `${id}_chicks`,
         });
       }
       Alert.alert("Batch created", `${name.trim()} is saved to your farm account.`);
@@ -242,15 +285,18 @@ export default function CreateBatchScreen() {
         <TouchableOpacity onPress={() => setSaveSupplier(!saveSupplier)} style={[styles.optionalToggle, { borderColor: border, backgroundColor: surface }]} disabled={!!supplierId || !supplier.trim()}><ThemedText type="tiny" color={supplierId ? accent : muted}>{supplierId ? "Saved supplier · linked by ID" : `${saveSupplier ? "☑" : "☐"} Save supplier for future batches`}</ThemedText></TouchableOpacity>
         <FarmDatePicker label="Arrival / start date" value={dateStarted} onChange={setDateStarted} />
         <FarmField label="Initial birds placed" value={quantity} onChangeText={setQuantity} keyboardType="number-pad" placeholder="Required" />
+        {enterprise === "broiler" ? <><FarmField label="Cost per chick (required)" value={costPerUnit} onChangeText={setCostPerUnit} keyboardType="decimal-pad" placeholder="0.00" /><ThemedText type="tiny" color={muted}>Chick purchase total: {money((Number(paidQuantity) || Number(quantity) || 0) * (Number(costPerUnit) || 0))}</ThemedText><FarmField label="Amount paid for chicks (optional; blank means unpaid)" value={chickAmountPaid} onChangeText={setChickAmountPaid} keyboardType="decimal-pad" placeholder="0.00" /></> : null}
         <TouchableOpacity onPress={() => setShowOptionalCosts(!showOptionalCosts)} style={[styles.optionalToggle, { borderColor: border, backgroundColor: surface }]}><ThemedText type="defaultSemiBold" color={accent}>{showOptionalCosts ? "− Hide optional initial costs" : "+ Add initial costs (optional)"}</ThemedText></TouchableOpacity>
-        {showOptionalCosts && <><FarmField label="Birds paid for (optional)" value={paidQuantity} onChangeText={setPaidQuantity} keyboardType="number-pad" placeholder="Leave blank if same as birds placed" /><ThemedText type="tiny" color={muted}>Use this when you received extra birds that were not charged. Chick cost is based on birds paid for, not birds placed.</ThemedText><FarmField label="Cost per chick (optional)" value={costPerUnit} onChangeText={setCostPerUnit} keyboardType="decimal-pad" placeholder="0.00" /><FarmField label="Transport cost (optional)" value={transportCost} onChangeText={setTransportCost} keyboardType="decimal-pad" placeholder="0.00" /><FarmField label="Initial setup costs (optional)" value={setupCost} onChangeText={setSetupCost} keyboardType="decimal-pad" placeholder="0.00" /></>}
+        {showOptionalCosts && <><FarmField label="Birds paid for (optional)" value={paidQuantity} onChangeText={setPaidQuantity} keyboardType="number-pad" placeholder="Leave blank if same as birds placed" /><ThemedText type="tiny" color={muted}>Use this when you received extra birds that were not charged. Chick cost is based on birds paid for, not birds placed.</ThemedText><FarmField label="Transport cost (optional)" value={transportCost} onChangeText={setTransportCost} keyboardType="decimal-pad" placeholder="0.00" /><FarmField label="Initial setup costs (optional)" value={setupCost} onChangeText={setSetupCost} keyboardType="decimal-pad" placeholder="0.00" /></>}
         <TouchableOpacity onPress={() => { setShowQuickPurchases(!showQuickPurchases); setShowOptionalCosts(true); }} style={[styles.optionalToggle, { borderColor: border, backgroundColor: surface }]}><ThemedText type="defaultSemiBold" color={accent}>{showQuickPurchases ? "− Hide quick consumable purchases" : "+ Add consumable purchases (optional)"}</ThemedText></TouchableOpacity>
         {showQuickPurchases ? <View style={styles.quickCard}>
           <ThemedText type="tiny" color={muted}>Quick purchases are saved as received purchases in the normal purchase ledger. You can allocate all or part of each quantity; allocated value uses the inventory weighted average cost.</ThemedText>
+          <ThemedText type="defaultSemiBold">Supplier</ThemedText><View style={styles.choices}><TouchableOpacity onPress={() => { setQuickSupplierId(""); setQuickSupplierName(""); }} style={[styles.choice, { backgroundColor: !quickSupplierId && !quickSupplierName ? accent : surface, borderColor: !quickSupplierId && !quickSupplierName ? accent : border }]}><ThemedText type="tiny" color={!quickSupplierId && !quickSupplierName ? "#fff" : muted}>Same as batch supplier</ThemedText></TouchableOpacity>{suppliers.filter((entry) => entry.active).map((entry) => <TouchableOpacity key={entry.id} onPress={() => { setQuickSupplierId(entry.id); setQuickSupplierName(entry.name); }} style={[styles.choice, { backgroundColor: quickSupplierId === entry.id ? accent : surface, borderColor: quickSupplierId === entry.id ? accent : border }]}><ThemedText type="tiny" color={quickSupplierId === entry.id ? "#fff" : muted}>{entry.name}</ThemedText></TouchableOpacity>)}</View>
+          <View style={styles.quickCreateRow}><View style={styles.quickCreateInput}><FarmField label="Add supplier" value={newQuickSupplierName} onChangeText={setNewQuickSupplierName} placeholder="Supplier name" /></View><TouchableOpacity accessibilityRole="button" accessibilityLabel="Save supplier" disabled={savingQuickSupplier} onPress={() => void addQuickSupplier()} style={[styles.quickAddButton, { backgroundColor: accent, opacity: savingQuickSupplier ? 0.6 : 1 }]}><ThemedText color="#fff">Save</ThemedText></TouchableOpacity></View>
           <ThemedText type="defaultSemiBold">Consumable category</ThemedText><View style={styles.choices}>{quickCategories.map((entry) => <TouchableOpacity key={entry.id} onPress={() => { setQuickCategoryId(entry.id); setQuickItemId(""); }} style={[styles.choice, { backgroundColor: quickCategoryId === entry.id ? accent : surface, borderColor: quickCategoryId === entry.id ? accent : border }]}><ThemedText type="tiny" color={quickCategoryId === entry.id ? "#fff" : muted}>{entry.name}</ThemedText></TouchableOpacity>)}</View>
           <View style={styles.quickCreateRow}><View style={styles.quickCreateInput}><FarmField label="New consumable category" value={newQuickCategoryName} onChangeText={setNewQuickCategoryName} placeholder="e.g. Feed" /></View><TouchableOpacity accessibilityRole="button" accessibilityLabel="Save consumable category" disabled={savingQuickCategory} onPress={() => void addQuickCategory()} style={[styles.quickAddButton, { backgroundColor: accent, opacity: savingQuickCategory ? 0.6 : 1 }]}><ThemedText color="#fff">Save</ThemedText></TouchableOpacity></View>
           {quickCategoryId ? <><ThemedText type="defaultSemiBold">Consumable item in this category</ThemedText><View style={styles.choices}>{consumableItems.map((item) => <TouchableOpacity key={item.id} onPress={() => { setQuickItemId(item.id); setQuickAmountPerItem(isCountUnit(item.baseUnit) ? "1" : ""); setQuickQuantity(""); setQuickUnitPrice(""); setQuickAllocation(""); }} style={[styles.choice, { backgroundColor: quickItemId === item.id ? accent : surface, borderColor: quickItemId === item.id ? accent : border }]}><ThemedText type="tiny" color={quickItemId === item.id ? "#fff" : muted}>{item.name} · {item.baseUnit}</ThemedText></TouchableOpacity>)}{!consumableItems.length ? <ThemedText type="tiny" color={muted}>No saved consumable items in this category yet.</ThemedText> : null}</View>
-          <View style={styles.quickCreateRow}><View style={styles.quickCreateInput}><FarmField label="New inventory item" value={newQuickItemName} onChangeText={setNewQuickItemName} placeholder="e.g. Broiler starter" /></View><View style={styles.quickUnitInput}><FarmField label="Unit" value={newQuickItemUnit} onChangeText={setNewQuickItemUnit} placeholder="kg" /></View></View><FarmButton label={savingQuickItem ? "Saving item…" : "Save item in this category"} secondary onPress={() => void addQuickInventoryItem()} disabled={savingQuickItem} />
+            <View style={styles.quickCreateRow}><View style={styles.quickCreateInput}><FarmField label="New inventory item" value={newQuickItemName} onChangeText={setNewQuickItemName} placeholder="e.g. Broiler starter" /></View><View style={styles.quickUnitInput}><FarmField label="Unit" value={newQuickItemUnit} onChangeText={setNewQuickItemUnit} placeholder="kg" /></View></View><FarmButton label={savingQuickItem ? "Saving item…" : "Save item in this category"} secondary onPress={() => void addQuickInventoryItem()} disabled={savingQuickItem} />
           </> : <ThemedText type="tiny" color={muted}>Choose or create a category to add its consumable items.</ThemedText>}
           {quickItem ? <><FarmField label={quickUsesPackages ? "Number of bags / packages" : `Quantity (${quickItem.baseUnit})`} value={quickQuantity} onChangeText={setQuickQuantity} keyboardType="decimal-pad" placeholder={quickUsesPackages ? "e.g. 3 bags" : "e.g. 50"} />{quickUsesPackages ? <FarmField label={`Amount in each package (${quickItem.baseUnit})`} value={quickAmountPerItem} onChangeText={setQuickAmountPerItem} keyboardType="decimal-pad" placeholder={quickItem.baseUnit === "kg" ? "e.g. 50 kg per bag" : `Amount per package in ${quickItem.baseUnit}`} /> : null}<FarmField label={quickUsesPackages ? "Price for one bag / package" : `Price per ${quickItem.baseUnit}`} value={quickUnitPrice} onChangeText={setQuickUnitPrice} keyboardType="decimal-pad" placeholder={quickUsesPackages ? "e.g. 25.00 per bag" : "e.g. 0.80 each"} />{quickUsesPackages ? <ThemedText type="tiny" color={muted}>Received: {quickReceivedQuantity || 0} {quickItem.baseUnit} · calculated price: {money(quickPricePerUnit)} / {quickItem.baseUnit} · purchase total: {money((Number(quickQuantity) || 0) * (Number(quickUnitPrice) || 0))}</ThemedText> : <ThemedText type="tiny" color={muted}>Purchase total: {money((Number(quickQuantity) || 0) * (Number(quickUnitPrice) || 0))}</ThemedText>}<FarmField label={`Quantity allocated to this batch (${quickItem.baseUnit}; blank = all)`} value={quickAllocation} onChangeText={setQuickAllocation} keyboardType="decimal-pad" placeholder={quickReceivedQuantity ? String(quickReceivedQuantity) : "All received quantity"} /><FarmField label="Purchase description (optional)" value={quickNotes} onChangeText={setQuickNotes} placeholder="Short note" /><TouchableOpacity onPress={() => setQuickPaid(!quickPaid)} style={styles.optionalToggle}><ThemedText type="tiny" color={accent}>{quickPaid ? "☑ Paid in full" : "☐ Unpaid; keep supplier balance due"}</ThemedText></TouchableOpacity><FarmButton label="Add another item" onPress={addQuickPurchase} /></> : null}
           {quickLines.map((line) => <View key={line.key} style={[styles.quickLine, { borderColor: border, backgroundColor: surface }]}><ThemedText type="defaultSemiBold">{line.itemName} · {line.packageCount} package(s) · {line.quantity} {line.unit} · {money(line.packageCount * line.pricePerItem)}</ThemedText><ThemedText type="tiny" color={muted}>Price {money(line.pricePerItem)} / package · calculated {money(line.unitPrice)} / {line.unit} · allocated {line.allocationQuantity} {line.unit} ({money(line.allocationQuantity * line.unitPrice)}) · {line.allocationQuantity < line.quantity ? `remaining ${line.quantity - line.allocationQuantity} ${line.unit} in farm stock` : "all allocated"} · {line.paid ? "paid in full" : "supplier balance due"}</ThemedText>{!createdBatchId ? <TouchableOpacity onPress={() => setQuickLines((previous) => previous.filter((entry) => entry.key !== line.key))}><ThemedText type="tiny" color={danger}>Remove item</ThemedText></TouchableOpacity> : null}</View>)}
@@ -270,7 +316,7 @@ export default function CreateBatchScreen() {
 }
 
 function localDate(date: Date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
-type QuickPurchaseLine = { key: string; itemId: string; itemName: string; categoryId?: string; category: string; unit: string; quantity: number; unitPrice: number; packageCount: number; amountPerItem: number; pricePerItem: number; allocationQuantity: number; paid: boolean; notes?: string };
+type QuickPurchaseLine = { key: string; itemId: string; itemName: string; categoryId?: string; category: string; unit: string; quantity: number; unitPrice: number; packageCount: number; amountPerItem: number; pricePerItem: number; allocationQuantity: number; paid: boolean; supplierId?: string; supplierName?: string; notes?: string };
 const money = (value: number) => `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const isCountUnit = (unit: string) => ["unit", "units", "item", "items", "piece", "pieces"].includes(unit.trim().toLocaleLowerCase());
 

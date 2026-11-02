@@ -1,12 +1,32 @@
+import { getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
-import { initializeApp } from "firebase-admin/app";
 import { HttpsError, onCall, onRequest } from "firebase-functions/v2/https";
 import { createHash, randomBytes } from "node:crypto";
+export { createArmamentSubscriptionPayment, armamentPaynowResult } from "./armamentPayments.js";
+export {
+  syncArmamentMoneyLedger,
+  syncArmamentCustomer,
+  registerArmamentBusiness,
+  inviteArmamentMember,
+  searchArmamentUsers,
+  respondArmamentInvitation,
+  revokeArmamentMember,
+  revokeArmamentInvitation,
+  getArmamentEntitlement,
+  readArmamentBusinessLedger,
+  listArmamentBusinesses,
+  setArmamentBusinessConnection,
+  recordArmamentTengesaExpense,
+  recordArmamentTengesaSale,
+  assignArmamentReferralCode,
+  attributeArmamentReferral,
+  redeemArmamentReferralCredit,
+} from "./armament.js";
 
-initializeApp();
+if (!getApps().length) initializeApp();
 
-const REQUIRED_PROJECT_ID = "murimi-9a3e7";
+const REQUIRED_PROJECT_ID = "armament-f5a0b";
 const MAX_AUTH_AGE_SECONDS = 5 * 60;
 const INTEGRATION_REGION = "us-central1";
 const isMurimiProject = () => (process.env.GCLOUD_PROJECT ?? process.env.GCP_PROJECT) === REQUIRED_PROJECT_ID;
@@ -30,7 +50,7 @@ async function purgeFinanceIntegrationCredentials(uid: string, accountId?: strin
 export const createMurimiFinancePairingCode = onCall({ region: INTEGRATION_REGION }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Sign in to connect a finance app.");
-  if (!isMurimiProject()) throw new HttpsError("failed-precondition", "Finance connections are available only in the Murimi production project.");
+  if (!isMurimiProject()) throw new HttpsError("failed-precondition", "Finance connections are available only in the Armament Firebase project.");
   const accountId = request.data?.accountId;
   const clientName = typeof request.data?.clientName === "string" ? request.data.clientName.trim().slice(0, 60) : "Finance app";
   if (!safeId(accountId) || !clientName) throw new HttpsError("invalid-argument", "Choose a valid farm account and app name.");
@@ -49,7 +69,7 @@ export const createMurimiFinancePairingCode = onCall({ region: INTEGRATION_REGIO
 export const listMurimiFinanceConnections = onCall({ region: INTEGRATION_REGION }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Sign in to manage app connections.");
-  if (!isMurimiProject()) throw new HttpsError("failed-precondition", "Finance connections are available only in the Murimi production project.");
+  if (!isMurimiProject()) throw new HttpsError("failed-precondition", "Finance connections are available only in the Armament Firebase project.");
   const accountId = request.data?.accountId;
   if (!safeId(accountId)) throw new HttpsError("invalid-argument", "A valid farm account is required.");
   const account = await getFirestore().doc(`users/${uid}/farmAccounts/${accountId}`).get();
@@ -62,7 +82,7 @@ export const listMurimiFinanceConnections = onCall({ region: INTEGRATION_REGION 
 export const revokeMurimiFinanceConnection = onCall({ region: INTEGRATION_REGION }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Sign in to revoke an app connection.");
-  if (!isMurimiProject()) throw new HttpsError("failed-precondition", "Finance connections are available only in the Murimi production project.");
+  if (!isMurimiProject()) throw new HttpsError("failed-precondition", "Finance connections are available only in the Armament Firebase project.");
   const { accountId, connectionId } = request.data ?? {};
   if (!safeId(accountId) || typeof connectionId !== "string" || !/^[a-f0-9]{64}$/.test(connectionId)) throw new HttpsError("invalid-argument", "The connection reference is invalid.");
   const ref = getFirestore().doc(`users/${uid}/farmAccounts/${accountId}/integrationPrivate/connections/${connectionId}`);
@@ -209,6 +229,47 @@ export const deleteMurimiFarmAccount = onCall({ region: "us-central1" }, async (
   }
 });
 
+/** Saves a pending phone-based farm invitation without exposing Murimi account existence. */
+export const createMurimiFarmInvitation = onCall({ region: "us-central1" }, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Sign in before inviting someone to a farm account.");
+  if (!isMurimiProject()) throw new HttpsError("failed-precondition", "Farm invitations are available only in the Murimi production project.");
+
+  const accountId = request.data?.accountId;
+  const phoneNumber = typeof request.data?.phoneNumber === "string" ? request.data.phoneNumber.trim() : "";
+  if (!safeId(accountId) || !/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
+    throw new HttpsError("invalid-argument", "Choose a farm account and enter a phone number in international format.");
+  }
+
+  const firestore = getFirestore();
+  const accountRef = firestore.doc(`users/${uid}/farmAccounts/${accountId}`);
+  const accountSnapshot = await accountRef.get();
+  const account = accountSnapshot.data();
+  if (!accountSnapshot.exists || account?.ownerId !== uid || account?.accountId !== accountId) {
+    throw new HttpsError("permission-denied", "This farm account is not available to your user.");
+  }
+
+  if (request.auth?.token.phone_number === phoneNumber) throw new HttpsError("invalid-argument", "You cannot invite your own phone number.");
+  const phoneHash = sha256(phoneNumber);
+  const invitationRef = accountRef.collection("invitations").doc(phoneHash);
+  const existing = await invitationRef.get();
+  if (existing.exists && existing.data()?.status === "pending") return { created: true, alreadyPending: true };
+  const now = new Date().toISOString();
+  await invitationRef.set({
+    ownerId: uid,
+    accountId,
+    accountNameSnapshot: account.name,
+    invitedByUid: uid,
+    invitedUserId: null,
+    invitedPhoneHash: phoneHash,
+    status: "pending",
+    role: null,
+    createdAt: now,
+    updatedAt: now,
+  });
+  return { created: true, alreadyPending: false };
+});
+
 /** Creates a private server-side audit entry for a generated export trace code. */
 export const recordMurimiExportTrace = onCall({ region: "us-central1" }, async (request) => {
   const uid = request.auth?.uid;
@@ -244,3 +305,5 @@ export const recordMurimiExportTrace = onCall({ region: "us-central1" }, async (
     throw new HttpsError("internal", "The export was created, but its trace could not be registered.");
   }
 });
+
+

@@ -5,7 +5,6 @@ import {
   getFarmSyncSummary,
   getLocalFarmRecord,
   getLocalFarmRecords,
-  purgeLocalFarmAccount,
   recordFarmSyncFailure,
   saveRemoteFarmRecords,
   setFarmLastSyncedAt,
@@ -14,10 +13,12 @@ import {
   type QueuedFarmChange
 } from "@/services/farmLocalDatabase";
 import type { Batch, BatchProblem, DailyRecord, Expense, FarmRecord, MortalityRecord, Sale, SalePayment, SlaughterRecord } from "@/types/farm";
+import { sharedCustomerId, sharedLedgerId } from "@/contracts/armament";
+import { callArmament } from "@/services/armamentApi";
 import { calculateClosingBirdCount, calculateCurrentBirdCount } from "@/Utilities/farmCalculations";
 import { calculateBatchAllocatedStock, calculateInventoryBalances } from "@/Utilities/inventoryCalculations";
-import type { DocumentData, QueryDocumentSnapshot } from "@react-native-firebase/firestore";
 import { getApp } from "@react-native-firebase/app";
+import type { DocumentData, QueryDocumentSnapshot } from "@react-native-firebase/firestore";
 import {
   collection,
   deleteDoc,
@@ -556,7 +557,7 @@ async function syncQueuedChange(change: QueuedFarmChange): Promise<Record<string
 }
 
 export type FarmSyncResult = { success: true; pendingCount: 0 } | { success: false; pendingCount: number; error: string };
-export const FARM_FIREBASE_PROJECT_ID = "murimi-9a3e7";
+export const FARM_FIREBASE_PROJECT_ID = "armament-f5a0b";
 const activeSyncs = new Map<string, Promise<FarmSyncResult>>();
 const activeRefreshes = new Map<string, Promise<void>>();
 const deletingMurimiUsers = new Set<string>();
@@ -575,36 +576,46 @@ export function syncFarmAccount(uid: string, accountId: string, force = false, o
   const current = activeSyncs.get(key); if (current) return current;
   const work: Promise<FarmSyncResult> = (async (): Promise<FarmSyncResult> => {
     try {
-    onProgress?.("syncing");
-    while (true) {
-      const queued = await getDueFarmChanges(uid, accountId, force);
-      if (!queued.length) break;
-      for (const item of queued) {
-        try {
-          const record = await withTimeout(syncQueuedChange(item), 25000);
-          if (item.operation === "delete") {
-            await setLocalFarmRecordSynced(uid, accountId, item.collectionName, item.recordId);
-          } else {
-            await setLocalFarmRecordSynced(uid, accountId, item.collectionName, item.recordId, record ?? item.record ?? undefined);
+      onProgress?.("syncing");
+      const farmAccount = await getDoc(doc(firestore, "users", uid, "farmAccounts", accountId));
+      if (farmAccount.exists()) {
+        try { await callArmament("registerArmamentBusiness", { sourceApp: "murimi", sourceId: accountId }); }
+        catch (error) { console.warn("Murimi business directory registration will retry at next sync.", error); }
+      }
+      while (true) {
+        const queued = await getDueFarmChanges(uid, accountId, force);
+        if (!queued.length) break;
+        for (const item of queued) {
+          try {
+            const record = await withTimeout(syncQueuedChange(item), 25000);
+            if (item.collectionName === "customers" && item.record && typeof item.record.name === "string") {
+              await callArmament("syncArmamentCustomer", { sourceApp: "murimi", sourceId: accountId, sourceDocumentId: item.recordId });
+            }
+            if (item.collectionName === "transactions" && item.record && typeof item.record.amount === "number" && item.record.amount > 0) {
+              await callArmament("syncArmamentMoneyLedger", { sourceApp: "murimi", sourceId: accountId, sourceCollection: "transactions", sourceDocumentId: item.recordId, sourceRecord: item.operation === "delete" ? item.record : undefined, deleted: item.operation === "delete" });
+            }            if (item.operation === "delete") {
+              await setLocalFarmRecordSynced(uid, accountId, item.collectionName, item.recordId);
+            } else {
+              await setLocalFarmRecordSynced(uid, accountId, item.collectionName, item.recordId, record ?? item.record ?? undefined);
+            }
+          } catch (error) {
+            const classification = classifySyncError(error, item);
+            await recordFarmSyncFailure(item.operationId, classification.message, classification.kind);
+            const summary = await getFarmSyncSummary(uid, accountId);
+            onProgress?.("failed", classification.message);
+            return { success: false, pendingCount: summary.pendingCount, error: classification.message };
           }
-        } catch (error) {
-          const classification = classifySyncError(error, item);
-          await recordFarmSyncFailure(item.operationId, classification.message, classification.kind);
-          const summary = await getFarmSyncSummary(uid, accountId);
-          onProgress?.("failed", classification.message);
-          return { success: false, pendingCount: summary.pendingCount, error: classification.message };
         }
       }
-    }
-    const summary = await getFarmSyncSummary(uid, accountId);
-    if (summary.pendingCount > 0) {
-      const error = summary.lastError ?? `${summary.pendingCount} saved changes are waiting to retry.`;
-      onProgress?.("failed", error);
-      return { success: false, pendingCount: summary.pendingCount, error };
-    }
-    await setFarmLastSyncedAt(uid, accountId);
-    onProgress?.("synced");
-    return { success: true, pendingCount: 0 };
+      const summary = await getFarmSyncSummary(uid, accountId);
+      if (summary.pendingCount > 0) {
+        const error = summary.lastError ?? `${summary.pendingCount} saved changes are waiting to retry.`;
+        onProgress?.("failed", error);
+        return { success: false, pendingCount: summary.pendingCount, error };
+      }
+      await setFarmLastSyncedAt(uid, accountId);
+      onProgress?.("synced");
+      return { success: true, pendingCount: 0 };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not complete farm synchronization.";
       let pendingCount = 0;
@@ -650,7 +661,7 @@ export async function recordMurimiExportTrace(accountId: string, idToken: string
   if (!response.ok || payload?.result?.recorded !== true) throw new Error(payload?.error?.message ?? `Export trace registration failed (${response.status}).`);
 }
 
-/** Deletes only one Murimi farm account in the cloud and purges its local rows after confirmation. */
+/** Deletes only one Murimi farm account in the cloud; the caller then purges local rows. */
 export async function deleteMurimiFarmAccount(uid: string, accountId: string, idToken: string): Promise<void> {
   if (getApp().options.projectId !== FARM_FIREBASE_PROJECT_ID) throw new Error(`Farm account deletion is available only from Firebase project ${FARM_FIREBASE_PROJECT_ID}.`);
   const key = `${uid}:${accountId}`;
@@ -666,11 +677,22 @@ export async function deleteMurimiFarmAccount(uid: string, accountId: string, id
     });
     const payload = await response.json().catch(() => null) as { result?: { deleted?: boolean }; error?: { message?: string } } | null;
     if (!response.ok || payload?.result?.deleted !== true) throw new Error(payload?.error?.message ?? `Farm account deletion failed (${response.status}).`);
-    await purgeLocalFarmAccount(uid, accountId);
   } catch (error) {
     deletingMurimiFarmAccounts.delete(key);
     throw error;
   }
+}
+
+export async function createMurimiFarmInvitation(accountId: string, phoneNumber: string, idToken: string): Promise<{ alreadyPending: boolean }> {
+  if (getApp().options.projectId !== FARM_FIREBASE_PROJECT_ID) throw new Error(`Farm invitations are available only from Firebase project ${FARM_FIREBASE_PROJECT_ID}.`);
+  const response = await fetch(`https://us-central1-${FARM_FIREBASE_PROJECT_ID}.cloudfunctions.net/createMurimiFarmInvitation`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ data: { accountId, phoneNumber } }),
+  });
+  const payload = await response.json().catch(() => null) as { result?: { created?: boolean; alreadyPending?: boolean }; error?: { message?: string } } | null;
+  if (!response.ok || payload?.result?.created !== true) throw new Error(payload?.error?.message ?? `Farm invitation could not be created (${response.status}).`);
+  return { alreadyPending: payload.result.alreadyPending === true };
 }
 
 export function finishMurimiFarmAccountDeletion(uid: string, accountId: string): void {
@@ -730,4 +752,5 @@ export async function saveFarmAccountMetadata(uid: string, account: { id: string
 export async function createFarmRecordId(uid: string, accountId: string, collectionName: FarmCollection): Promise<string> {
   return doc(farmCollection(uid, accountId, collectionName)).id;
 }
+
 

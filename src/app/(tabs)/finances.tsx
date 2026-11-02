@@ -17,7 +17,7 @@ export default function FinancesScreen() {
   const { records: sales } = useFarmRecords<Sale>("sales"); const { records: expenses } = useFarmRecords<Expense>("expenses"); const { records: purchases } = useFarmRecords<Purchase>("purchases"); const { records: assets } = useFarmRecords<FarmAsset>("assets"); const { records: batches } = useFarmRecords<Batch>("batches");
   const { records: inventoryItems } = useFarmRecords<InventoryItem>("stock"); const { records: movements } = useFarmRecords<StockMovement>("stockMovements");
   const inventory = calculateInventoryBalances(inventoryItems, purchases, movements);
-  const summary = calculateFinanceSummary({ transactions, sales, expenses, purchases, assets: purchaseBackedAssets(purchases, assets), stockMovements: movements, inventoryValue: inventory.totalValue, activeBatchCosts: batches.reduce((sum, batch) => sum + batch.initialQuantity * (batch.costPerUnit ?? 0) + batch.transportCost + batch.setupCost, 0) });
+  const summary = calculateFinanceSummary({ transactions, sales, expenses, purchases, assets: purchaseBackedAssets(purchases, assets), stockMovements: movements, inventoryValue: inventory.totalValue, activeBatchCosts: batches.reduce((sum, batch) => sum + (batch.paidQuantity ?? batch.initialQuantity) * (batch.costPerUnit ?? 0) + batch.transportCost + batch.setupCost, 0) });
   const cashTrail = [...transactions].sort((a, b) => a.date.localeCompare(b.date)).reduce<number[]>((points, entry) => [...points, (points.at(-1) ?? 0) + (entry.direction === "inflow" ? entry.amount : -entry.amount)], [0]);
   const go = (path: string) => router.push(path as never);
   const rows: [string, number, string][] = [

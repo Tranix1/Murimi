@@ -1,45 +1,23 @@
+﻿import { initializeApp } from "firebase/app";
+import { getFirestore } from "firebase/firestore";
+import { getStorage } from "firebase/storage";
 
-import { initializeApp } from "firebase/app";
-
-
-import { getFirestore, } from 'firebase/firestore'
-import { getStorage } from "firebase/storage"
-
-// const firebaseConfig = {
-//   apiKey: "AIzaSyD9lbKyl6QTiOZLEm7005VHI8lDgoYHTQA",
-//   authDomain: "truckers-cace6.firebaseapp.com",
-//   projectId: "truckers-cace6",
-//   storageBucket: "truckers-cace6.appspot.com",
-//   messagingSenderId: "355769728168",
-//   appId: "1:355769728168:web:0960c6b40f0fcdfd58569d",
-//   measurementId: "G-CJPGMZJBSD"
-// };
-export const firebaseConfig = { 
-  apiKey: "AIzaSyDY9dgj43xzhjfOLtW2rqPeUNOvXQTy_dw",
-  authDomain: "transix-470b3.firebaseapp.com",
-  projectId: "transix-470b3",
-  storageBucket: "transix-470b3.firebasestorage.app",
-  messagingSenderId: "426143331819",
-  appId: "1:426143331819:web:658f6bd5a92a62508e55ae",
-  measurementId: "G-95BHLPFXLG"
+// Keep the modular Firebase SDK on this app's native Armament registration.
+export const firebaseConfig = {
+  apiKey: "AIzaSyDW6CHv887ClF4nVTzGa28vzI9Jd1hqa0Y",
+  authDomain: "armament-f5a0b.firebaseapp.com",
+  projectId: "armament-f5a0b",
+  storageBucket: "armament-f5a0b.firebasestorage.app",
+  messagingSenderId: "853368688021",
+  appId: "1:853368688021:android:ab93b719098b631cb53a9c",
 };
 
-
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app)
-export const storage = getStorage(app)
-
-
+export const db = getFirestore(app);
+export const storage = getStorage(app);
 
 // AI is optional and must not initialize while the application bundle is loading.
-// Loading it only when an AI feature is used keeps a Firebase AI failure from
-// preventing the root layout and authentication UI from rendering.
-
-/** Vertex AI is not configured for Murimi. Keep legacy callers explicit instead of
- * silently initializing the unrelated Transix Firebase project. */
+/** Vertex AI is not configured for Murimi. */
 export async function getVertexModel(): Promise<any> {
-  throw new Error('Image AI is not configured for this Murimi project yet.');
+  throw new Error("Image AI is not configured for this Murimi project yet.");
 }
-
-
-

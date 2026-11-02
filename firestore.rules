@@ -4,6 +4,59 @@ service cloud.firestore {
     function owns(userId) {
       return request.auth != null && request.auth.uid == userId;
     }
+    function isBusinessMember(businessId) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/businessMemberships/$(businessId + '_' + request.auth.uid))
+        && get(/databases/$(database)/documents/businessMemberships/$(businessId + '_' + request.auth.uid)).data.status == 'active'
+        && get(/databases/$(database)/documents/businessMemberships/$(businessId + '_' + request.auth.uid)).data.businessId == businessId;
+    }
+    function hasBusinessPermission(businessId, permission) {
+      return isBusinessMember(businessId)
+        && businessSubscriptionActive(businessId)
+        && (get(/databases/$(database)/documents/businessMemberships/$(businessId + '_' + request.auth.uid)).data.role in ['owner', 'admin']
+          || get(/databases/$(database)/documents/businessMemberships/$(businessId + '_' + request.auth.uid)).data.permissions.hasAny(['*', permission]));
+    }
+    function businessSubscriptionActive(businessId) {
+      let businessPath = /databases/$(database)/documents/businesses/$(businessId);
+      return exists(businessPath)
+        && get(businessPath).data.status == 'active'
+        && exists(/databases/$(database)/documents/subscriptions/$(get(businessPath).data.ownerId))
+        && get(/databases/$(database)/documents/subscriptions/$(get(businessPath).data.ownerId)).data.status == 'active'
+        && get(/databases/$(database)/documents/subscriptions/$(get(businessPath).data.ownerId)).data.expiresAt is timestamp
+        && get(/databases/$(database)/documents/subscriptions/$(get(businessPath).data.ownerId)).data.expiresAt > request.time;
+    }
+    function sourceBusinessId(ownerId, appId, sourceId) {
+      let mappingPath = /databases/$(database)/documents/sourceBusinessMappings/$(ownerId + '_' + appId + '_' + sourceId);
+      return exists(mappingPath) ? get(mappingPath).data.businessId : '';
+    }
+    function sourceHasPermission(ownerId, appId, sourceId, permission) {
+      let businessId = sourceBusinessId(ownerId, appId, sourceId);
+      return businessId != '' && hasBusinessPermission(businessId, permission);
+    }
+    function canReadBusinessLedger(row) {
+      return row.ownerId == request.auth.uid
+        || hasBusinessPermission(row.businessId, 'finance.read')
+        || (hasBusinessPermission(row.businessId, 'investment.read')
+          && (row.sourceCollection == 'investments' || row.kind == 'investment' || row.transactionType == 'investment'));
+    }
+
+    match /users/{userId} {
+      allow read: if owns(userId);
+      allow create: if owns(userId) && request.resource.data.uid == userId;
+      allow update: if owns(userId) && resource.data.uid == userId && request.resource.data.uid == userId;
+      allow delete: if false;
+    }
+
+    match /users/{userId}/connectedApps/{connectionId} {
+      allow read: if owns(userId);
+      allow create, update: if owns(userId)
+        && request.resource.data.id == connectionId
+        && request.resource.data.ownerId == userId
+        && request.resource.data.appId in ['murimi', 'tengesa']
+        && request.resource.data.businessId is string
+        && request.resource.data.status == 'connected';
+      allow delete: if owns(userId);
+    }
 
     function farmCollection(collectionName) {
       return collectionName in [
@@ -14,6 +67,9 @@ service cloud.firestore {
         'purchaseMeasures', 'suppliers', 'saleProductTypes'
       ];
     }
+    function farmFinancialCollection(collectionName) {
+      return collectionName in ['expenses', 'purchases', 'sales', 'transactions', 'assets', 'payments'];
+    }
 
     function hasFarmScope(userId, accountId) {
       return request.resource.data.ownerId == userId
@@ -23,7 +79,7 @@ service cloud.firestore {
     // Account metadata is stored at this path and is needed to restore account
     // names and IDs on a different device.
     match /users/{userId}/farmAccounts/{accountId} {
-      allow read: if owns(userId);
+      allow read: if owns(userId) || sourceHasPermission(userId, 'murimi', accountId, 'operations.read');
       allow create: if owns(userId)
         && hasFarmScope(userId, accountId)
         && request.resource.data.number is int
@@ -48,18 +104,186 @@ service cloud.firestore {
 
     // Farm records use /users/{uid}/farmAccounts/{accountId}/{collection}/{id}.
     match /users/{userId}/farmAccounts/{accountId}/{collectionName}/{recordId} {
-      allow read: if owns(userId) && farmCollection(collectionName);
-      allow create: if owns(userId)
+      allow read: if owns(userId) && farmCollection(collectionName)
+        || farmCollection(collectionName)
+          && (sourceHasPermission(userId, 'murimi', accountId, 'finance.read')
+            || (collectionName != 'customers' && collectionName != 'customerCategories'
+              && !farmFinancialCollection(collectionName)
+              && sourceHasPermission(userId, 'murimi', accountId, 'operations.read'))
+            || ((collectionName == 'customers' || collectionName == 'customerCategories')
+              && sourceHasPermission(userId, 'murimi', accountId, 'customers.read')));
+      allow create: if (owns(userId) || (!farmFinancialCollection(collectionName)
+          && sourceHasPermission(userId, 'murimi', accountId, 'operations.write')))
         && farmCollection(collectionName)
         && hasFarmScope(userId, accountId);
       // The path already scopes records to this owner and farm account. Do
       // not require old documents to contain scope fields: earlier app builds
       // may have created records before those fields were added.
-      allow update: if owns(userId)
+      allow update: if (owns(userId) || (!farmFinancialCollection(collectionName)
+          && sourceHasPermission(userId, 'murimi', accountId, 'operations.write')))
         && farmCollection(collectionName)
         && hasFarmScope(userId, accountId);
       allow delete: if owns(userId)
         && farmCollection(collectionName);
+    }
+
+    // Fynage's personal finance cloud mirror. These paths do not grant access
+    // to shared business records owned by another user.
+    match /users/{userId}/financial_ledger/{recordId} {
+      allow read: if owns(userId) && resource.data.ownerId == userId;
+      allow create, update: if owns(userId)
+        && request.resource.data.ownerId == userId
+        && request.resource.data.id == recordId
+        && request.resource.data.businessId is string;
+      allow delete: if false;
+    }
+    match /users/{userId}/financial_categories/{categoryId} {
+      allow read: if owns(userId) && resource.data.ownerId == userId;
+      allow create, update: if owns(userId)
+        && request.resource.data.ownerId == userId
+        && request.resource.data.id == categoryId
+        && request.resource.data.businessId is string;
+      allow delete: if false;
+    }
+    match /users/{userId}/financial_accounts/{accountId} {
+      allow read: if owns(userId) && resource.data.ownerId == userId;
+      allow create, update: if owns(userId)
+        && request.resource.data.ownerId == userId
+        && request.resource.data.id == accountId
+        && request.resource.data.businessId is string;
+      allow delete: if false;
+    }
+
+    // Each Tengesa business is a Firestore document. Operational collections
+    // live below that store so inventory and sales cannot cross store scopes.
+    match /users/{userId}/tengesa/{businessId} {
+      allow read: if owns(userId) || sourceHasPermission(userId, 'tengesa', businessId, 'operations.read');
+      allow create, update: if owns(userId)
+        && request.resource.data.ownerId == userId
+        && request.resource.data.id == businessId;
+      allow delete: if false;
+    }
+    match /users/{userId}/tengesa/{businessId}/{collectionName}/{recordId} {
+      function tengesaCollection() {
+        return collectionName in ['products', 'sales', 'expenses', 'movements', 'customers'];
+      }
+      function ownsTengesaBusiness() {
+        return exists(/databases/$(database)/documents/users/$(userId)/tengesa/$(businessId))
+          && get(/databases/$(database)/documents/users/$(userId)/tengesa/$(businessId)).data.ownerId == userId;
+      }
+      allow read: if tengesaCollection() && ownsTengesaBusiness()
+        && (owns(userId)
+          || ((collectionName == 'products' || collectionName == 'movements')
+            && sourceHasPermission(userId, 'tengesa', businessId, 'operations.read'))
+          || ((collectionName == 'sales' || collectionName == 'expenses')
+            && sourceHasPermission(userId, 'tengesa', businessId, 'finance.read'))
+          || (collectionName == 'customers'
+            && sourceHasPermission(userId, 'tengesa', businessId, 'customers.read')));
+      allow create, update: if owns(userId)
+        && tengesaCollection()
+        && ownsTengesaBusiness()
+        && request.resource.data.ownerId == userId
+        && request.resource.data.businessId == businessId
+        && request.resource.data.id == recordId;
+      allow delete: if false;
+    }
+
+    // One canonical ledger. Personal Fynage entries are user owned; business
+    // entries require the corresponding source account to exist and belong
+    // to that same owner. Writes by other members require a later membership
+    // rules rollout and are therefore denied by default here.
+    match /moneyLedger/{entryId} {
+      function validLedgerScope() {
+        return request.resource.data.sourceApp == 'fynage'
+            && request.resource.data.sourceModule == 'personal'
+          || request.resource.data.sourceApp == 'murimi'
+            && request.resource.data.businessId == request.resource.data.accountId
+            && exists(/databases/$(database)/documents/users/$(request.auth.uid)/farmAccounts/$(request.resource.data.accountId))
+            && get(/databases/$(database)/documents/users/$(request.auth.uid)/farmAccounts/$(request.resource.data.accountId)).data.ownerId == request.auth.uid
+          || request.resource.data.sourceApp == 'tengesa'
+            && request.resource.data.businessId == request.resource.data.accountId
+            && exists(/databases/$(database)/documents/users/$(request.auth.uid)/tengesa/$(request.resource.data.businessId))
+            && get(/databases/$(database)/documents/users/$(request.auth.uid)/tengesa/$(request.resource.data.businessId)).data.ownerId == request.auth.uid;
+      }
+      allow read: if request.auth != null && (canReadBusinessLedger(resource.data)
+        || sourceHasPermission(resource.data.ownerId, resource.data.sourceApp, resource.data.accountId, 'finance.read')
+        || ((resource.data.sourceCollection == 'investments'
+          || resource.data.kind == 'investment'
+          || resource.data.transactionType == 'investment')
+          && sourceHasPermission(resource.data.ownerId, resource.data.sourceApp, resource.data.accountId, 'investment.read')));
+      allow create: if request.auth != null
+        && request.resource.data.id == entryId
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.accountId is string
+        && request.resource.data.sourceApp in ['fynage', 'murimi', 'tengesa']
+        && request.resource.data.sourceCollection is string
+        && request.resource.data.sourceDocumentId is string
+        && request.resource.data.amountMinor is int
+        && request.resource.data.amountMinor > 0
+        && request.resource.data.currency is string
+        && request.resource.data.transactionAt is string
+        && request.resource.data.createdAt is string
+        && request.resource.data.updatedAt is string
+        && request.resource.data.status in ['pending', 'posted', 'void']
+        && validLedgerScope();
+      allow update: if request.auth != null
+        && resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.id == entryId
+        && request.resource.data.accountId == resource.data.accountId
+        && request.resource.data.businessId == resource.data.businessId
+        && request.resource.data.sourceApp == resource.data.sourceApp
+        && request.resource.data.sourceCollection == resource.data.sourceCollection
+        && request.resource.data.sourceDocumentId == resource.data.sourceDocumentId
+        && request.resource.data.amountMinor is int
+        && request.resource.data.amountMinor > 0
+        && request.resource.data.updatedAt is string
+        && request.resource.data.status in ['pending', 'posted', 'void'];
+      allow delete: if false;
+    }
+
+    match /businesses/{id} {
+      allow get: if isBusinessMember(id);
+      allow list: if request.auth != null && resource.data.ownerId == request.auth.uid;
+      allow write: if false;
+    }
+    match /sourceBusinessMappings/{id} { allow read, write: if false; }
+    match /businessMemberships/{id} {
+      allow get, list: if request.auth != null
+        && (resource.data.userId == request.auth.uid
+          || (isBusinessMember(resource.data.businessId)
+            && get(/databases/$(database)/documents/businessMemberships/$(resource.data.businessId + '_' + request.auth.uid)).data.role in ['owner', 'admin']));
+      allow write: if false;
+    }
+    match /subscriptions/{id} { allow read: if request.auth != null && id == request.auth.uid; allow write: if false; }
+    match /subscriptionPayments/{id} { allow read, write: if false; }
+    match /referrals/{id} { allow read, write: if false; }
+    match /referralCredits/{id} { allow read: if request.auth != null && resource.data.ownerId == request.auth.uid; allow write: if false; }
+    match /referralCodes/{id} { allow read, write: if false; }
+    match /referralOwners/{id} { allow read: if request.auth != null && id == request.auth.uid; allow write: if false; }
+    match /referralAttributions/{id} { allow read: if request.auth != null && id == request.auth.uid; allow write: if false; }
+    match /invitations/{id} { allow get, list: if request.auth != null && (resource.data.targetUid == request.auth.uid || resource.data.invitedByUid == request.auth.uid); allow write: if false; }
+
+    // Owner-visible customer references emitted by source apps. These are
+    // deliberately scoped to the source account and never grant cross-user access.
+    match /customerLedger/{customerId} {
+      allow read: if request.auth != null && (resource.data.ownerId == request.auth.uid
+        || sourceHasPermission(resource.data.ownerId, resource.data.sourceApp, resource.data.businessId, 'customers.read'));
+      allow create: if request.auth != null
+        && request.resource.data.id == customerId
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.businessId is string
+        && request.resource.data.sourceApp in ['murimi', 'tengesa']
+        && request.resource.data.sourceCollection == 'customers'
+        && request.resource.data.sourceDocumentId is string;
+      allow update: if request.auth != null
+        && resource.data.ownerId == request.auth.uid
+        && request.resource.data.id == customerId
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.businessId == resource.data.businessId
+        && request.resource.data.sourceApp == resource.data.sourceApp
+        && request.resource.data.sourceDocumentId == resource.data.sourceDocumentId;
+      allow delete: if false;
     }
 
     // No other paths or nested collections are client-accessible.

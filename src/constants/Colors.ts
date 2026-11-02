@@ -1,8 +1,8 @@
 const tintColorLight = '#0a7ea4';
 const tintColorDark = '#fff';
 
-const accent = '#0f9d58';
-const accentlight = '#46cb8129';
+const accent = '#0F9D58';
+const accentlight = '#0F9D581A';
 
 const coolGray = '#C4C4C4';
 
