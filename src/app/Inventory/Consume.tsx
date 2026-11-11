@@ -5,7 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useFarmRecords } from "@/hooks/useFarmRecords";
 import { useThemeColor } from "@/hooks/useThemeColor";
 import { recordStockConsumption } from "@/services/farmRepository";
-import { calculateBatchAllocatedStock } from "@/Utilities/inventoryCalculations";
+import { calculateBatchAllocatedStock, calculateInventoryBalances } from "@/Utilities/inventoryCalculations";
 import type { Batch, InventoryItem, Purchase, StockMovement } from "@/types/farm";
 import { router, useLocalSearchParams } from "expo-router";
 import { useRef, useState } from "react";
@@ -27,23 +27,26 @@ export default function RecordStockUseScreen() {
     const idempotencyKey = useRef(makeKey());
     const accent = useThemeColor("accent"); const surface = useThemeColor("backgroundLight"); const border = useThemeColor("border"); const muted = useThemeColor("textlight"); const bad = useThemeColor("bad");
     const batchStock = item && batchId ? calculateBatchAllocatedStock(item.id, batchId, purchases, movements, item) : null;
+    const farmStock = item && !batchId ? calculateInventoryBalances([item], purchases, movements).balances[0] : null;
     const amount = Number(quantity); const usedValue = batchStock?.averageUnitCost != null && amount > 0 ? batchStock.averageUnitCost * amount : null;
+    const farmUsedValue = farmStock?.averageUnitCost != null && amount > 0 ? farmStock.averageUnitCost * amount : null;
 
     const save = async () => {
         const amount = Number(quantity);
         if (!user?.uid || !activeAccountId || !item) return setError("Select an active farm item first.");
-        if (!batchId || !Number.isFinite(amount) || amount <= 0) return setError("Choose a batch and enter a positive quantity.");
+        if (!Number.isFinite(amount) || amount <= 0) return setError("Enter a positive quantity.");
         setSaving(true); setError("");
         try {
-            await recordStockConsumption(user.uid, activeAccountId, { itemId: item.id, batchId, quantity: amount, unit: item.baseUnit, date, idempotencyKey: idempotencyKey.current });
+            await recordStockConsumption(user.uid, activeAccountId, { itemId: item.id, batchId: batchId || undefined, quantity: amount, unit: item.baseUnit, date, idempotencyKey: idempotencyKey.current });
             router.back();
         } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not record stock usage."); }
         finally { setSaving(false); }
     };
 
-    return <BatchPage title="Record batch use"><ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
-        {item ? <><ThemedText type="subtitle">{item.name}</ThemedText><ThemedText type="tiny" color={muted}>Record actual usage from stock already allocated to a batch. Usage reduces batch stock; its cost was recognized when issued.</ThemedText>
-            <ThemedText type="defaultSemiBold">Batch</ThemedText><View style={styles.choices}>{activeBatches.map((batch) => <Choice key={batch.id} label={`${batch.name} · ${batch.batchNumber ?? batch.id}`} selected={batchId === batch.id} onPress={() => setBatchId(batch.id)} accent={accent} surface={surface} border={border} muted={muted} />)}</View>
+    return <BatchPage title="Record stock use"><ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+        {item ? <><ThemedText type="subtitle">{item.name}</ThemedText><ThemedText type="tiny" color={muted}>Record stock as used by the farm generally or by one batch. Farm-wide use is not charged to any batch.</ThemedText>
+            <ThemedText type="defaultSemiBold">Use for</ThemedText><View style={styles.choices}><Choice label="Farm-wide use (not a batch)" selected={!batchId} onPress={() => setBatchId("")} accent={accent} surface={surface} border={border} muted={muted} />{activeBatches.map((batch) => <Choice key={batch.id} label={`${batch.name} · ${batch.batchNumber ?? batch.id}`} selected={batchId === batch.id} onPress={() => setBatchId(batch.id)} accent={accent} surface={surface} border={border} muted={muted} />)}</View>
+            {!batchId && farmStock ? <View style={[styles.stockCard, { backgroundColor: surface, borderColor: border }]}><ThemedText type="tiny" color={muted}>Available for farm use: {farmStock.available} {item.baseUnit} · {money(farmStock.value)}</ThemedText><ThemedText type="tiny" color={muted}>Planned use value: {money(farmUsedValue)} · Remaining after use: {Math.max(0, farmStock.available - Math.max(0, amount || 0))} {item.baseUnit}</ThemedText></View> : null}
             {batchStock ? <View style={[styles.stockCard, { backgroundColor: surface, borderColor: border }]}><ThemedText type="tiny" color={muted}>Allocated to batch: {batchStock.quantity} {item.baseUnit} · {money(batchStock.value)}</ThemedText><ThemedText type="tiny" color={muted}>Average unit cost: {batchStock.averageUnitCost == null ? "Cost unavailable" : `${money(batchStock.averageUnitCost)} / ${item.baseUnit}`}</ThemedText><ThemedText type="tiny" color={muted}>Planned use value: {money(usedValue)} · Remaining after use: {Math.max(0, batchStock.quantity - Math.max(0, amount || 0))} {item.baseUnit} · {money(batchStock.value != null && usedValue != null ? Math.max(0, batchStock.value - usedValue) : null)}</ThemedText></View> : null}
             <FarmField label={`Quantity used (${item.baseUnit})`} value={quantity} onChangeText={setQuantity} keyboardType="decimal-pad" />
             <FarmDatePicker label="Usage date" value={date} onChange={setDate} />

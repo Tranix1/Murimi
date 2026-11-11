@@ -63,7 +63,7 @@ export default function BatchesTab() {
     return result.sort((left, right) => {
       if (sort === "oldest") return left.dateStarted.localeCompare(right.dateStarted);
       if (sort === "highest_cost") return summary(right).costsIncurred - summary(left).costsIncurred;
-      if (sort === "age") return ageDays(right.dateStarted) - ageDays(left.dateStarted);
+      if (sort === "age") return ageDays(right) - ageDays(left);
       return right.dateStarted.localeCompare(left.dateStarted);
     });
   }, [batches, filter, search, sort, daily, expenses, sales, weights, slaughter, purchases, stockMovements]);
@@ -125,7 +125,7 @@ export default function BatchesTab() {
         <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
           {visibleBatches.map((batch) => {
             const values = summary(batch);
-            const age = batch.historical ? historicalAge(batch.dateStarted, batch.historicalData?.actualCompletionDate) : ageDays(batch.dateStarted);
+            const age = batch.historical ? historicalAge(batch.dateStarted, batch.historicalData?.actualCompletionDate) : ageDays(batch);
             const closed = batch.status === "completed" || batch.status === "archived";
             const productionStage = batch.historical || closed || age == null ? null : batchProductionStageForAge(age);
             const mortality = values.mortalityPercent == null ? "—" : `${values.mortalityPercent.toFixed(1)}%`;
@@ -168,8 +168,8 @@ function MiniStat({ label, value, valueColor }: { label: string; value: string; 
   return <View style={styles.miniStat}><ThemedText type="tiny" color={muted}>{label}</ThemedText><ThemedText type="defaultSemiBold" color={valueColor ?? text} style={styles.miniValue}>{value}</ThemedText></View>;
 }
 
-function ageDays(date: string) {
-  return calculateBatchAgeDays(date) ?? 0;
+function ageDays(batch: Batch) {
+  return calculateBatchAgeDays(batch.dateStarted, new Date(), batch.startedAt) ?? 0;
 }
 
 function historicalAge(start: string, end?: string) { if (!start || !end) return null; const from = new Date(`${start}T00:00:00`); const to = new Date(`${end}T00:00:00`); if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || to < from) return null; return Math.floor((to.getTime() - from.getTime()) / 86_400_000) + 1; }

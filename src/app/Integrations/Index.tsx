@@ -4,7 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { getAuth } from "@react-native-firebase/auth";
 import { router } from "expo-router";
 import CustomHeader from "@/components/CustomHeader";
-import { FarmButton, FarmField } from "@/components/farm/FarmComponents";
+import { FarmButton } from "@/components/farm/FarmComponents";
 import ScreenWrapper from "@/components/ScreenWrapper";
 import { ThemedText } from "@/components/ThemedText";
 import { useAuth } from "@/context/AuthContext";
@@ -12,6 +12,7 @@ import { useThemeColor } from "@/hooks/useThemeColor";
 import { FARM_FIREBASE_PROJECT_ID } from "@/services/farmRepository";
 
 type Connection = { id: string; clientName: string; createdAt: string; lastUsedAt?: string | null; expiresAt: string; revoked: boolean; active: boolean };
+const financeApps = [{ id: "fynage", label: "Fynage" }, { id: "tengesa", label: "Tengesa" }] as const;
 const endpoint = `https://us-central1-${FARM_FIREBASE_PROJECT_ID}.cloudfunctions.net`;
 
 async function callOwnerFunction<T>(name: string, data: Record<string, unknown>): Promise<T> {
@@ -60,7 +61,7 @@ export default function FinanceConnectionsScreen() {
   return <ScreenWrapper fh={false}><CustomHeader pageTitle="Finance app connections" /><ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
     <View style={[styles.info, { backgroundColor: surface, borderColor: border }]}><Ionicons name="shield-checkmark-outline" size={22} color={accent} /><View style={styles.flex}><ThemedText type="defaultSemiBold" color={text}>Share financial data securely</ThemedText><ThemedText type="tiny" color={muted}>Pair an app by name. Its one-time code expires in 10 minutes; its read-only access token expires in 90 days. Disconnect it here at any time. The app may keep downloaded data offline; disconnecting stops future downloads but cannot erase its saved copy.</ThemedText></View></View>
     <ThemedText type="tiny" color={muted}>Farm account: {activeAccountName ?? activeAccountId ?? "None selected"}</ThemedText>
-    <FarmField label="App name" value={clientName} onChangeText={setClientName} placeholder="For example, Fynage" />
+    <ThemedText type="defaultSemiBold" color={text}>Choose app</ThemedText><View style={styles.appChoices}>{financeApps.map((app) => <TouchableOpacity key={app.id} onPress={() => setClientName(app.label)} style={[styles.appChoice, { backgroundColor: clientName === app.label ? accent : surface, borderColor: clientName === app.label ? accent : border }]}><Ionicons name={app.id === "fynage" ? "wallet-outline" : "storefront-outline"} size={18} color={clientName === app.label ? "#fff" : accent} /><ThemedText type="tiny" color={clientName === app.label ? "#fff" : text}>{app.label}</ThemedText></TouchableOpacity>)}</View>
     <FarmButton label={busy ? "Please wait…" : "Create one-time pairing code"} onPress={() => void createCode()} disabled={busy} />
     {pairingCode ? <View style={[styles.codeCard, { backgroundColor: surface, borderColor: border }]}><ThemedText type="defaultSemiBold" color={text}>Give this code to the app you are connecting</ThemedText><ThemedText selectable style={styles.code} color={accent}>{pairingCode}</ThemedText><ThemedText type="tiny" color={muted}>Expires {new Date(expiresAt).toLocaleTimeString()} · single use</ThemedText><FarmButton label="Share pairing code" secondary onPress={() => void Share.share({ message: `Murimi finance pairing code: ${pairingCode}\nUse it within 10 minutes to connect ${clientName || "your app"}.` })} /></View> : null}
     <ThemedText type="defaultSemiBold" color={text}>Connected apps</ThemedText>
@@ -70,4 +71,4 @@ export default function FinanceConnectionsScreen() {
     <TouchableOpacity onPress={() => router.back()}><ThemedText type="tiny" color={accent}>Back</ThemedText></TouchableOpacity>
   </ScrollView></ScreenWrapper>;
 }
-const styles = StyleSheet.create({ content: { padding: 18, gap: 14, paddingBottom: 36 }, info: { borderWidth: 1, borderRadius: 15, padding: 13, flexDirection: "row", alignItems: "flex-start", gap: 10 }, flex: { flex: 1, gap: 5 }, codeCard: { borderWidth: 1, borderRadius: 15, padding: 14, gap: 10 }, code: { fontSize: 14, fontWeight: "700", letterSpacing: 1 }, connection: { borderWidth: 1, borderRadius: 14, padding: 13, flexDirection: "row", alignItems: "center", gap: 12 } });
+const styles = StyleSheet.create({ content: { padding: 18, gap: 14, paddingBottom: 36 }, info: { borderWidth: 1, borderRadius: 15, padding: 13, flexDirection: "row", alignItems: "flex-start", gap: 10 }, flex: { flex: 1, gap: 5 }, appChoices: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, appChoice: { minHeight: 44, borderWidth: 1, borderRadius: 12, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 7 }, codeCard: { borderWidth: 1, borderRadius: 15, padding: 14, gap: 10 }, code: { fontSize: 14, fontWeight: "700", letterSpacing: 1 }, connection: { borderWidth: 1, borderRadius: 14, padding: 13, flexDirection: "row", alignItems: "center", gap: 12 } });

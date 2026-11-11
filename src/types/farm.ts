@@ -1,4 +1,4 @@
-export type EnterpriseType = "broiler" | "pigs" | "fish" | "crops" | "other";
+export type EnterpriseType = "broiler" | "layers" | "pigs" | "fish" | "crops" | "other";
 export type BatchStatus = "growing" | "selling" | "partially_sold" | "completed" | "archived";
 export type ExpenseCategory =
   | "initial_stock" | "feed" | "transport" | "medicine" | "bedding" | "heating"
@@ -21,6 +21,8 @@ export type Batch = FarmRecord & {
   supplier?: string;
   supplierId?: string;
   dateStarted: string;
+  /** Local farm placement time as an ISO timestamp with timezone offset. */
+  startedAt?: string;
   dateStartedEstimated?: boolean;
   initialQuantity: number;
   paidQuantity?: number;
@@ -396,6 +398,7 @@ export type FarmPlan = FarmRecord & {
   recoveredAmount?: number;
   closedAt?: string;
   priority: "low" | "normal" | "high";
+  priorityNumber?: 1 | 2 | 3;
   status: "planned" | "committed" | "partially_completed" | "completed" | "cancelled";
   actualAmount: number;
   notes?: string;

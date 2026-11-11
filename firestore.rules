@@ -268,11 +268,12 @@ service cloud.firestore {
     // deliberately scoped to the source account and never grant cross-user access.
     match /customerLedger/{customerId} {
       allow read: if request.auth != null && (resource.data.ownerId == request.auth.uid
-        || sourceHasPermission(resource.data.ownerId, resource.data.sourceApp, resource.data.businessId, 'customers.read'));
+        || sourceHasPermission(resource.data.ownerId, resource.data.sourceApp, resource.data.accountId, 'customers.read'));
       allow create: if request.auth != null
         && request.resource.data.id == customerId
         && request.resource.data.ownerId == request.auth.uid
         && request.resource.data.businessId is string
+        && request.resource.data.accountId is string
         && request.resource.data.sourceApp in ['murimi', 'tengesa']
         && request.resource.data.sourceCollection == 'customers'
         && request.resource.data.sourceDocumentId is string;
@@ -281,6 +282,7 @@ service cloud.firestore {
         && request.resource.data.id == customerId
         && request.resource.data.ownerId == resource.data.ownerId
         && request.resource.data.businessId == resource.data.businessId
+        && request.resource.data.accountId == resource.data.accountId
         && request.resource.data.sourceApp == resource.data.sourceApp
         && request.resource.data.sourceDocumentId == resource.data.sourceDocumentId;
       allow delete: if false;

@@ -13,43 +13,26 @@ import Input from '@/components/Input';
 import {
     EvilIcons,
     Ionicons,
-    MaterialCommunityIcons,
-    FontAwesome5,
 } from '@expo/vector-icons';
 import { hp, wp } from '@/constants/common';
 import { useThemeColor } from '@/hooks/useThemeColor';
 import { ThemedText } from '@/components/ThemedText';
 import { Image } from 'expo-image';
 import { useAuth } from '@/context/AuthContext';
-import { AccountType } from '@/types/types';
 import { router } from 'expo-router';
 import PhoneInput from '@/components/PhoneInput';
-import { validateReferralCode } from '@/db/operations';
 import { trackEventFirebase, trackScreen } from '@/services/analytics/firebaseAnalystics';
 import { useColorScheme } from 'react-native';
 import { getAuth, signInWithPhoneNumber } from "@react-native-firebase/auth";
 
-
-const ACCOUNT_TYPES: {
-    key: AccountType;
-    label: string;
-    icon: (color: string) => React.ReactNode;
-}[] = [
-        { key: 'tracking', label: 'Tracking', icon: (c) => <Ionicons name="location" size={20} color={c} /> },
-        { key: 'fleet', label: 'Fleet', icon: (c) => <FontAwesome5 name="truck" size={17} color={c} /> },
-        { key: 'driver', label: 'Driver', icon: (c) => <Ionicons name="person" size={20} color={c} /> },
-        { key: 'brokerage', label: 'Broker', icon: (c) => <MaterialCommunityIcons name="briefcase-outline" size={20} color={c} /> },
-    ];
 
 const Index = ({ setDspLoginOrSignup, setIsSigningUp }: any) => {
     const [fullname, setFullName] = useState('');
     const [referrerCode, setReferrerCode] = useState('');
     const [acceptTerms, setAcceptTerms] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [selectedAccount, setSelectedAccount] = useState<AccountType | null>(null);
     const [loading, setLoading] = useState(false);
 
-    const backgroundLight = useThemeColor('backgroundLight');
     const icon = useThemeColor('icon');
     const accent = useThemeColor('accent');
     const coolGray = useThemeColor('coolGray');
@@ -67,8 +50,6 @@ const Index = ({ setDspLoginOrSignup, setIsSigningUp }: any) => {
     const [verificationId, setVerificationId] = useState("");
     const [otp, setOtp] = useState("");
     const [otpSent, setOtpSent] = useState(false);
-
-    const [referralValidation, setReferralValidation] = useState<any>(null);
 
     console.log("Selected Country:", countryCode.name, countryCode.countryName);
 
@@ -92,8 +73,6 @@ const Index = ({ setDspLoginOrSignup, setIsSigningUp }: any) => {
 
     const { signUp, } = useAuth();
 
-    const handleAccountSelect = (type: AccountType) => setSelectedAccount(type);
-
     // const verificationId = await provider.verifyPhoneNumber(
     //     phoneNumber,
     // );
@@ -104,7 +83,7 @@ const Index = ({ setDspLoginOrSignup, setIsSigningUp }: any) => {
         try {
             setLoading(true);
 
-            trackEventFirebase("otp_sent", { accountType: selectedAccount }).catch(console.error);
+            trackEventFirebase("otp_sent", { accountType: "tracking" }).catch(console.error);
 
             const length = phoneNumber.replace(/\D/g, "").length;
 
@@ -115,12 +94,6 @@ const Index = ({ setDspLoginOrSignup, setIsSigningUp }: any) => {
                 return;
             }
 
-                 if (! selectedAccount) {
-            setError("Please select Account Type");
-            setLoading(false);
-            
-            return;
-        }
             if (countryCode.name === "+267") {
                 if (length !== 8) {
                     setError("Botswana phone number must be 8 digits");
@@ -143,21 +116,6 @@ const Index = ({ setDspLoginOrSignup, setIsSigningUp }: any) => {
             setLoading(false);
 
                 return;
-            }
-
-            if (selectedAccount !== "tracking" && referrerCode) {
-                const normalizedCode = referrerCode.trim().toUpperCase();
-
-                const validation = await validateReferralCode(normalizedCode);
-
-                if (!validation.exists) {
-                    setError("Invalid referral code");
-            setLoading(false);
-
-                    return;
-                }
-
-                setReferralValidation(validation);
             }
 
             setError(null);
@@ -195,11 +153,6 @@ const Index = ({ setDspLoginOrSignup, setIsSigningUp }: any) => {
             return;
         }
 
-          if (! selectedAccount) {
-            setError("Please select Account Type");
-            return;
-        }
-        
         if (!confirmation) {
             setError("OTP session expired. Please request a new code.");
             return;
@@ -221,24 +174,15 @@ const Index = ({ setDspLoginOrSignup, setIsSigningUp }: any) => {
                 phoneNumber: `${countryCode.name}${phoneNumber}`,
                 verificationId,
                 referrerCode,
-                accountType: selectedAccount,
+                accountType: "tracking",
                 displayName: fullname,
-                referralValidation,
                 countryCode: countryCode.name,
                 countryName: countryCode.countryName || "Unknown",
             });
             
             if (result.success) {
                 ToastAndroid.show("Account created successfully!", ToastAndroid.SHORT);
-                if (selectedAccount === "fleet") {
-                    router.replace("/");
-                } else if (selectedAccount === "brokerage") {
-                    router.replace("/");
-                } else if (selectedAccount === "driver") {
-                    router.replace("/");
-                } else {
-                    router.push("/");
-                }
+                router.replace("/");
             } else {
                 setError(result.message || "Signup failed. Please try again.");
             }
@@ -277,7 +221,7 @@ const Index = ({ setDspLoginOrSignup, setIsSigningUp }: any) => {
                     {/* LOGO */}
                     <Image
                         contentFit="contain"
-                        source={colorScheme === "light" ? require('@/assets/trialogo.svg') : require('@/assets/transix_logo_black_bg.png')}
+                        source={colorScheme === "light" ? require('@/assets/images/murimi-icon-light.png') : require('@/assets/images/murimi-icon-dark.png')}
                         
                         style={styles.logo}
                     />
@@ -288,47 +232,8 @@ const Index = ({ setDspLoginOrSignup, setIsSigningUp }: any) => {
                             Create Account
                         </ThemedText>
                         <ThemedText style={styles.subHeader} color={coolGray}>
-                            Join Transix and access smart transport solutions
+                            Create your Murimi account to manage your farm
                         </ThemedText>
-                    </View>
-
-                    {/* ACCOUNT SELECTION */}
-                    <View style={styles.accountContainer}>
-                        <ThemedText style={styles.accountTitle} color={coolGray}>
-                            Select Account Type
-                        </ThemedText>
-
-                        <View style={styles.accountGrid}>
-                            {ACCOUNT_TYPES.map(({ key, label, icon: renderIcon }) => {
-                                const selected = selectedAccount === key;
-                                return (
-                                    <TouchableOpacity
-                                        key={key}
-                                        activeOpacity={0.85}
-                                        onPress={() => handleAccountSelect(key)}
-                                        style={[
-                                            styles.accountButton,
-                                            {
-                                                backgroundColor: selected ? accent : backgroundLight,
-                                                borderColor: selected ? accent : 'rgba(128,128,128,0.25)',
-                                                shadowOpacity: selected ? 0.15 : 0,
-                                                elevation: selected ? 3 : 0,
-                                            },
-                                        ]}
-                                    >
-                                        {renderIcon(selected ? '#fff' : icon)}
-                                        <ThemedText
-                                            style={[
-                                                styles.accountButtonLabel,
-                                                {color :selected ? '#fff' : undefined}
-                                            ]}
-                                        >
-                                            {label}
-                                        </ThemedText>
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </View>
                     </View>
 
                     {error && (
@@ -365,20 +270,6 @@ const Index = ({ setDspLoginOrSignup, setIsSigningUp }: any) => {
                     />
 
 
-                    {selectedAccount !== 'tracking' && (
-                        <View>
-                            <ThemedText style={styles.label}>Referral Code </ThemedText>
-                            <Input
-                                containerStyles={styles.input}
-                                placeholder="Enter referrer code"
-                                value={referrerCode}
-                                onChangeText={setReferrerCode}
-                                autoCapitalize="characters"
-                                editable={!otpSent}
-
-                            />
-                        </View>
-                    )}
                     {otpSent && (
                         <>
                             <ThemedText style={styles.label}>OTP Code</ThemedText>
@@ -492,29 +383,6 @@ const styles = StyleSheet.create({
     headerContainer: { marginBottom: hp(2) },
     header: { fontSize: wp(7), fontWeight: '700' },
     subHeader: { marginTop: hp(0.8), fontSize: wp(3.8), lineHeight: 22 },
-
-    accountContainer: { marginBottom: hp(3) },
-    accountTitle: { marginBottom: hp(1.5), fontSize: wp(3.5), fontWeight: '600' },
-    accountGrid: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        justifyContent: 'space-between',
-        rowGap: hp(1.2),
-    },
-    accountButton: {
-        width: '48.5%',
-        flexDirection: 'row',
-        paddingVertical: hp(1.6),
-        borderRadius: wp(3.5),
-        borderWidth: 1.5,
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: wp(2),
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowRadius: 4,
-    },
-    accountButtonLabel: { fontSize: wp(3.5) },
 
     errorBanner: {
         flexDirection: 'row',

@@ -1,15 +1,12 @@
-# Murimi account deletion function
+# Armament shared backend
 
-The callables are scoped to Firebase project `murimi-9a3e7` and region `us-central1`:
+This Functions codebase owns the shared backend for Fynage, Murimi and Tengesa. Its Firebase project is `armament-f5a0b`, and `firebase.json` in the Murimi project is the deployment source for `firestore.rules`, `firestore.indexes.json` and the `murimi` Functions codebase.
 
-- `deleteMurimiAccount` requires a recent authentication event, recursively deletes `/users/{uid}` and its subcollections, then deletes the Firebase Authentication user.
-- `deleteMurimiFarmAccount` recursively deletes only `/users/{uid}/farmAccounts/{accountId}` and its subcollections. It leaves the user's other farm accounts and sign-in intact.
-- `recordMurimiExportTrace` records the authenticated user, farm account, export code, format, record count, and included categories. Export files do not contain the user's UID or phone number.
+No production deployment was performed. Before an operator deploys:
 
-Before deploying, install Firebase CLI and authenticate with an account that can deploy Functions and manage Authentication users. From the repository root, run:
+1. Set the real `PAYNOW_ID` and `PAYNOW_KEY` with Firebase Secret Manager.
+2. Set `ARMAMENT_MONTHLY_AMOUNT_MINOR` in `functions/.env.armament-f5a0b` to the approved integer price in USD cents. Payment creation returns `503` while this value is missing or invalid; no default price is used.
+3. Configure Firebase Authentication providers, Functions/Firestore billing, and the approved Paynow merchant callback settings in the Firebase Console.
+4. Run `npm run build` from `functions`, then review and explicitly deploy from the Murimi project root with `firebase --project armament-f5a0b deploy --only firestore:rules,firestore:indexes,functions:murimi`.
 
-```sh
-firebase deploy --only functions --project murimi-9a3e7
-```
-
-The project must have Cloud Functions enabled and meet the Firebase billing requirements. Do not deploy this function to the legacy `transix-470b3` project.
+Never commit `.env.armament-f5a0b` or substitute credentials. Emulator tests use synthetic identities and demo project IDs; they do not access production data.

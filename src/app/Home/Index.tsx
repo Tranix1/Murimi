@@ -34,7 +34,8 @@ export default function Home() {
   const { records: inventoryItems } = useFarmRecords<InventoryItem>("stock");
   const { records: stockMovements } = useFarmRecords<StockMovement>("stockMovements");
 
-  const batchSummaries = batches.map((batch) => ({
+  const visibleBatches = batches.filter((batch) => batch.status !== "completed" && batch.status !== "archived");
+  const batchSummaries = visibleBatches.map((batch) => ({
     batch,
     summary: calculateBatchSummary(batch,
       daily.filter((entry) => entry.batchId === batch.id),
@@ -67,7 +68,7 @@ export default function Home() {
             <ThemedText type="tiny" color={muted}>Live records for your selected account</ThemedText>
           </View>
           <View style={[styles.count, { backgroundColor: `${accent}18` }]}>
-            <ThemedText type="defaultSemiBold" color={accent}>{batches.length}</ThemedText>
+            <ThemedText type="defaultSemiBold" color={accent}>{visibleBatches.length}</ThemedText>
             <ThemedText type="tiny" color={accent}>batches</ThemedText>
           </View>
         </View>
@@ -80,7 +81,7 @@ export default function Home() {
         </View>
 
         <View style={styles.sectionHeader}>
-          <View><ThemedText type="subtitle" color={text}>Production batches</ThemedText><ThemedText type="tiny" color={muted}>{batches.length} recorded · {totalAlive.toLocaleString()} alive</ThemedText></View>
+          <View><ThemedText type="subtitle" color={text}>Production batches</ThemedText><ThemedText type="tiny" color={muted}>{visibleBatches.length} active · {totalAlive.toLocaleString()} alive</ThemedText></View>
           <TouchableOpacity onPress={() => go("/(tabs)/batches")}><ThemedText type="tiny" color={accent} style={styles.link}>View all</ThemedText></TouchableOpacity>
         </View>
         {isLoading ? <ActivityIndicator color={accent} style={styles.loader} /> : error ? <Notice text={`Batches could not load: ${error}`} /> : batches.length === 0 ? (
@@ -90,9 +91,8 @@ export default function Home() {
             <Ionicons name="chevron-forward" size={19} color={muted} />
           </TouchableOpacity>
         ) : batchSummaries.slice(0, 4).map(({ batch, summary }) => {
-          const age = batch.historical ? null : calculateBatchAgeDays(batch.dateStarted);
-          const closed = batch.status === "completed" || batch.status === "archived";
-          const stage = age == null || closed ? null : batchProductionStageForAge(age);
+          const age = batch.historical ? null : calculateBatchAgeDays(batch.dateStarted, new Date(), batch.startedAt);
+          const stage = age == null ? null : batchProductionStageForAge(age);
           return <TouchableOpacity key={batch.id} activeOpacity={0.8} onPress={() => router.push({ pathname: "/Batches/BatchDetails" as never, params: { batchId: batch.id } })} style={[styles.batchCard, { backgroundColor: surface, borderColor: border }]}>
             <View style={[styles.batchIcon, { backgroundColor: `${accent}18` }]}><Ionicons name="leaf-outline" size={20} color={accent} /></View>
             <View style={styles.flex}><ThemedText type="defaultSemiBold" color={text}>{batch.name} · Batch {batch.batchNumber ?? batch.id}</ThemedText><ThemedText type="tiny" color={muted}>{batch.enterprise} · {batch.stockType} · {summary.birdsAlive.toLocaleString()} alive{age == null ? "" : ` · Day ${age}${stage ? ` · ${batchProductionStageLabel(stage)}` : ""}`}</ThemedText></View>
@@ -103,13 +103,13 @@ export default function Home() {
         <View style={styles.sectionHeader}><ThemedText type="subtitle" color={text}>Quick actions</ThemedText></View>
         <View style={styles.quickActions}>
           <QuickAction icon="add-circle-outline" label="New batch" onPress={() => go("/Batches/CreateBatch")} />
-          <QuickAction icon="today-outline" label="Record today" onPress={() => batches[0] ? router.push({ pathname: "/Batches/RecordToday" as never, params: { batchId: batches[0].id } }) : go("/Batches/CreateBatch")} />
+          <QuickAction icon="today-outline" label="Record today" onPress={() => visibleBatches[0] ? router.push({ pathname: "/Batches/RecordToday" as never, params: { batchId: visibleBatches[0].id } }) : go("/Batches/CreateBatch")} />
           <QuickAction icon="calendar-outline" label="Add plan" onPress={() => go("/Plans/Create")} />
           <QuickAction icon="cart-outline" label="Record Purchase" onPress={() => go("/Farm/RecordPurchase")} />
         </View>
 
         <View style={styles.sectionHeader}><View><ThemedText type="subtitle" color={text}>Upcoming plans</ThemedText><ThemedText type="tiny" color={muted}>Your saved reminders</ThemedText></View><TouchableOpacity onPress={() => go("/Plans/Index")}><ThemedText type="tiny" color={accent} style={styles.link}>See all</ThemedText></TouchableOpacity></View>
-        {upcoming.length ? upcoming.map((plan) => <View key={plan.id} style={[styles.planRow, { backgroundColor: surface, borderColor: border }]}><View style={[styles.planDate, { backgroundColor: `${accent}18` }]}><ThemedText type="tiny" color={accent}>{plan.plannedDate.slice(5)}</ThemedText></View><View style={styles.flex}><ThemedText type="defaultSemiBold" color={text}>{plan.name}</ThemedText><ThemedText type="tiny" color={muted}>{plan.category} · {money(plan.amount)} · {plan.status.replaceAll("_", " ")}</ThemedText></View></View>) : <ThemedText type="tiny" color={muted} style={styles.noPlans}>No upcoming plans recorded.</ThemedText>}
+        {upcoming.length ? upcoming.map((plan) => <View key={plan.id} style={[styles.planRow, { backgroundColor: surface, borderColor: border }]}><View style={[styles.planDate, { backgroundColor: `${accent}18` }]}><ThemedText type="tiny" color={accent}>{plan.plannedDate.slice(5)}</ThemedText></View><View style={styles.flex}><ThemedText type="defaultSemiBold" color={text}>{plan.name}</ThemedText><ThemedText type="tiny" color={muted}>Priority {plan.priorityNumber ?? (plan.priority === "high" ? 1 : plan.priority === "low" ? 3 : 2)} · {plan.category} · {money(plan.amount)} · {plan.status.replaceAll("_", " ")}</ThemedText></View></View>) : <ThemedText type="tiny" color={muted} style={styles.noPlans}>No upcoming plans recorded.</ThemedText>}
       </ScrollView>
     </ScreenWrapper>
   );

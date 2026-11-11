@@ -20,6 +20,12 @@ const requireUid = (request: CallableRequest<unknown>) => {
 const str = (value: unknown, max = 160): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= max;
 const businessKey = (uid: string, appId: string, sourceId: string) => hash(`${uid}:${appId}:${sourceId}`).slice(0, 40);
 const memberKey = (businessId: string, uid: string) => `${businessId}_${uid}`;
+const addUtcMonth = (from: number) => {
+  const date = new Date(from); const day = date.getUTCDate();
+  date.setUTCDate(1); date.setUTCMonth(date.getUTCMonth() + 1);
+  const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+  date.setUTCDate(Math.min(day, lastDay)); return date.getTime();
+};
 const sourceMapId = (ownerId: string, appId: string, sourceId: string) => `${ownerId}_${appId}_${sourceId}`;
 const activeRole = async (businessId: string, uid: string) => {
   const snapshot = await db.doc(`businessMemberships/${memberKey(businessId, uid)}`).get();
@@ -110,6 +116,43 @@ export const syncArmamentCustomer = onCall({ region: "us-central1" }, async (req
   }, { merge: true });
   return { id, synced: true };
 });
+/** Creates or updates a business customer only for an active authorized member. */
+export const createArmamentBusinessCustomer = onCall({ region: "us-central1" }, async (request) => {
+  const uid = requireUid(request);
+  const { businessId, customer } = request.data ?? {};
+  if (!str(businessId, 64) || !customer || !str(customer.id, 100) || !/^[A-Za-z0-9_-]+$/.test(customer.id)
+    || !str(customer.name, 120) || (customer.phone != null && !str(customer.phone, 40))) {
+    throw new HttpsError("invalid-argument", "Business and valid customer details are required.");
+  }
+  const businessRef = db.doc(`businesses/${businessId}`);
+  const business = await businessRef.get();
+  if (!business.exists || business.get("status") !== "active" || !["murimi", "tengesa"].includes(String(business.get("sourceApp")))) throw new HttpsError("not-found", "Business is unavailable.");
+  const role = await activeRole(businessId, uid);
+  const member = await db.doc(`businessMemberships/${memberKey(businessId, uid)}`).get();
+  const permissions = member.data()?.permissions;
+  if (!role || (!(role === "owner" || role === "admin") && !(Array.isArray(permissions) && permissions.includes("customers.write")))) throw new HttpsError("permission-denied", "This role cannot manage business customers.");
+  const ownerId = String(business.get("ownerId"));
+  const sourceApp = String(business.get("sourceApp"));
+  const sourceId = String(business.get("sourceId"));
+  const subscription = await db.doc(`subscriptions/${ownerId}`).get();
+  if (!subscription.exists || subscription.get("status") !== "active" || !(subscription.get("expiresAt") instanceof Timestamp) || subscription.get("expiresAt").toMillis() <= Date.now()) throw new HttpsError("permission-denied", "The business subscription is inactive.");
+  const sourcePath = sourceApp === "murimi"
+    ? `users/${ownerId}/farmAccounts/${sourceId}/customers/${customer.id}`
+    : `users/${ownerId}/tengesa/${sourceId}/customers/${customer.id}`;
+  const sourceRef = db.doc(sourcePath);
+  const ledgerId = `customer_${encodeURIComponent(JSON.stringify([ownerId, sourceApp, businessId, "customers", customer.id]))}`;
+  const ledgerRef = db.doc(`customerLedger/${ledgerId}`);
+  const now = new Date().toISOString();
+  await db.runTransaction(async (tx) => {
+    const [existing, existingLedger] = await Promise.all([tx.get(sourceRef), tx.get(ledgerRef)]);
+    if (existing.exists && (existing.get("ownerId") !== ownerId || (existing.get("accountId") ?? existing.get("businessId")) !== sourceId)) throw new HttpsError("already-exists", "Customer identity belongs to another business.");
+    if (existingLedger.exists && (existingLedger.get("ownerId") !== ownerId || existingLedger.get("businessId") !== businessId || existingLedger.get("accountId") !== sourceId)) throw new HttpsError("already-exists", "Customer reference identity conflicts with another business.");
+    const sourceRecord = { id: customer.id, ownerId, accountId: sourceId, businessId: sourceId, name: customer.name.trim(), phone: typeof customer.phone === "string" ? customer.phone.trim() : null, location: typeof customer.location === "string" ? customer.location.trim().slice(0, 160) : null, active: customer.active !== false, createdAt: existing.get("createdAt") ?? now, updatedAt: now, recordedByUid: uid };
+    tx.set(sourceRef, sourceRecord, { merge: true });
+    tx.set(ledgerRef, { id: ledgerId, ownerId, businessId, accountId: sourceId, sourceApp, sourceCollection: "customers", sourceDocumentId: customer.id, name: sourceRecord.name, phone: sourceRecord.phone, active: sourceRecord.active, createdAt: sourceRecord.createdAt, updatedAt: now }, { merge: true });
+  });
+  return { id: ledgerId, customerId: customer.id, businessId, created: true };
+});
 /** Registers a newly-created operational account in the shared business directory. */
 export const registerArmamentBusiness = onCall({ region: "us-central1" }, async (request) => {
   const uid = requireUid(request);
@@ -189,10 +232,14 @@ export const respondArmamentInvitation = onCall({ region: "us-central1" }, async
     const invitation = await tx.get(invitationRef);
     const data = invitation.data();
     if (!data || data.targetUid !== uid || data.status !== "pending" || !(data.expiresAt instanceof Timestamp) || data.expiresAt.toMillis() <= Date.now()) throw new HttpsError("permission-denied", "This invitation is unavailable or expired.");
+    const businessRef = db.doc(`businesses/${data.businessId}`);
+    const membershipRef = db.doc(`businessMemberships/${memberKey(data.businessId, uid)}`);
+    const [business, membership] = await Promise.all([tx.get(businessRef), tx.get(membershipRef)]);
+    if (!business.exists || business.get("status") !== "active" || business.get("ownerId") !== data.ownerId) throw new HttpsError("failed-precondition", "This business is unavailable.");
+    if (membership.exists && membership.get("status") === "active") throw new HttpsError("already-exists", "You already have active access to this business.");
     tx.update(invitationRef, { status: response, respondedAt: FieldValue.serverTimestamp() });
     if (response === "accepted") {
-      const membershipRef = db.doc(`businessMemberships/${memberKey(data.businessId, uid)}`);
-      tx.set(membershipRef, { id: membershipRef.id, businessId: data.businessId, userId: uid, ownerId: data.ownerId, role: data.role, status: "active", permissions: data.role === "investor" ? ["investment.read"] : data.role === "employee" ? ["operations.read", "operations.write"] : ["operations.read", "operations.write", "finance.read"], invitationId, createdAt: FieldValue.serverTimestamp() });
+      tx.set(membershipRef, { id: membershipRef.id, businessId: data.businessId, userId: uid, ownerId: data.ownerId, role: data.role, status: "active", permissions: data.role === "investor" ? ["investment.read"] : data.role === "employee" ? ["operations.read", "operations.write", "customers.read", "customers.write"] : ["operations.read", "operations.write", "finance.read"], invitationId, createdAt: FieldValue.serverTimestamp() });
     }
   });
   return { status: response };
@@ -416,7 +463,7 @@ export const recordArmamentTengesaSale = onCall({ region: "us-central1" }, async
       tx.set(db.doc(`customerLedger/${customerLedgerId}`), {
         id: customerLedgerId,
         ownerId,
-        businessId: storeId,
+        businessId,
         accountId: storeId,
         sourceApp: "tengesa",
         sourceCollection: "customers",
@@ -507,7 +554,7 @@ export const redeemArmamentReferralCredit = onCall({ region: "us-central1" }, as
     const current = subscription.data();
     const base = current?.status === "active" && current.expiresAt instanceof Timestamp && current.expiresAt.toMillis() > Date.now() ? current.expiresAt.toMillis() : Date.now();
     tx.update(creditRef, { status: "redeemed", redeemedBy: uid, redeemedAt: FieldValue.serverTimestamp() });
-    tx.set(subscriptionRef, { ownerId: uid, status: "active", plan: "monthly", source: "referral_credit", expiresAt: Timestamp.fromMillis(base + 30 * 86400000), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    tx.set(subscriptionRef, { ownerId: uid, status: "active", plan: "monthly", source: "referral_credit", expiresAt: Timestamp.fromMillis(addUtcMonth(base)), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
   });
   return { redeemed: true };
 });

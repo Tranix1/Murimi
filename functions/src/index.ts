@@ -3,10 +3,11 @@ import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import { HttpsError, onCall, onRequest } from "firebase-functions/v2/https";
 import { createHash, randomBytes } from "node:crypto";
-export { createArmamentSubscriptionPayment, armamentPaynowResult } from "./armamentPayments.js";
+export { createArmamentSubscriptionPayment, armamentPaynowResult, getArmamentSubscriptionPlan, checkArmamentSubscriptionPayment } from "./armamentPayments.js";
 export {
   syncArmamentMoneyLedger,
   syncArmamentCustomer,
+  createArmamentBusinessCustomer,
   registerArmamentBusiness,
   inviteArmamentMember,
   searchArmamentUsers,

@@ -14,7 +14,6 @@ import {
 } from "@/services/farmLocalDatabase";
 import type { Batch, BatchProblem, DailyRecord, Expense, FarmRecord, MortalityRecord, Sale, SalePayment, SlaughterRecord } from "@/types/farm";
 import { sharedCustomerId, sharedLedgerId } from "@/contracts/armament";
-import { callArmament } from "@/services/armamentApi";
 import { calculateClosingBirdCount, calculateCurrentBirdCount } from "@/Utilities/farmCalculations";
 import { calculateBatchAllocatedStock, calculateInventoryBalances } from "@/Utilities/inventoryCalculations";
 import { getApp } from "@react-native-firebase/app";
@@ -35,7 +34,10 @@ import {
 } from "@react-native-firebase/firestore";
 
 export type FarmCollection = "batches" | "dailyRecords" | "mortalityRecords" | "batchProblems" | "weights" | "expenses" | "purchases" | "sales" | "slaughter" | "assets" | "plans" | "planCategories" | "transactions" | "stock" | "stockMovements" | "payments" | "treatments" | "customerCategories" | "customers" | "paymentMethods" | "purchaseCategories" | "purchaseMeasures" | "suppliers" | "saleProductTypes";
-export const FARM_COLLECTIONS: FarmCollection[] = ["batches", "dailyRecords", "mortalityRecords", "batchProblems", "weights", "purchases", "sales", "slaughter", "assets", "plans", "planCategories", "transactions", "stock", "stockMovements", "payments", "treatments", "customerCategories", "customers", "paymentMethods", "purchaseCategories", "purchaseMeasures", "suppliers", "saleProductTypes"];
+// Keep this list exhaustive. It is used by the authoritative fresh-device
+// restore, so omitting a collection here makes records appear to disappear
+// after login on another device even though they still exist in Firestore.
+export const FARM_COLLECTIONS: FarmCollection[] = ["batches", "dailyRecords", "mortalityRecords", "batchProblems", "weights", "expenses", "purchases", "sales", "slaughter", "assets", "plans", "planCategories", "transactions", "stock", "stockMovements", "payments", "treatments", "customerCategories", "customers", "paymentMethods", "purchaseCategories", "purchaseMeasures", "suppliers", "saleProductTypes"];
 
 const firestore = getFirestore();
 const farmCollection = (uid: string, accountId: string, name: FarmCollection) => collection(firestore, "users", uid, "farmAccounts", accountId, name);
@@ -362,24 +364,28 @@ export async function recordStockAdjustment(uid: string, accountId: string, inpu
   return movementId;
 }
 
-export async function recordStockConsumption(uid: string, accountId: string, input: { itemId: string; quantity: number; unit: string; date: string; batchId: string; idempotencyKey: string }): Promise<string> {
+export async function recordStockConsumption(uid: string, accountId: string, input: { itemId: string; quantity: number; unit: string; date: string; batchId?: string; idempotencyKey: string }): Promise<string> {
   if (!Number.isFinite(input.quantity) || input.quantity <= 0 || !input.unit.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(input.date)) throw new Error("Enter a valid date, quantity, and unit.");
   if (!/^[A-Za-z0-9_-]{1,100}$/.test(input.idempotencyKey)) throw new Error("Invalid stock movement reference.");
   const movementId = `consumed_${input.idempotencyKey}`;
   if (await getLocalFarmRecord(uid, accountId, "stockMovements", movementId)) return movementId;
   const item = await getLocalFarmRecord<import("@/types/farm").InventoryItem>(uid, accountId, "stock", input.itemId);
   if (!item?.active || item.inventoryTracked === false) throw new Error("This item is not active and quantity-tracked.");
-  const batch = await getLocalFarmRecord<Batch>(uid, accountId, "batches", input.batchId);
-  if (!batch || batch.status === "completed" || batch.status === "archived") throw new Error("Choose an active batch for this stock usage.");
+  const batch = input.batchId ? await getLocalFarmRecord<Batch>(uid, accountId, "batches", input.batchId) : null;
+  if (input.batchId && (!batch || batch.status === "completed" || batch.status === "archived")) throw new Error("Choose an active batch for this stock usage.");
   const [purchases, movements] = await Promise.all([
     getLocalFarmRecords<import("@/types/farm").Purchase>(uid, accountId, "purchases"),
     getLocalFarmRecords<import("@/types/farm").StockMovement>(uid, accountId, "stockMovements"),
   ]);
-  const batchStock = calculateBatchAllocatedStock(item.id, input.batchId, purchases, movements, item);
-  if (input.quantity > batchStock.quantity + 1e-9) throw new Error(`Only ${batchStock.quantity} ${item.baseUnit} are available in this batch allocation.`);
-  if (batchStock.averageUnitCost == null) throw new Error("Cost unavailable for this batch allocation. Review the original purchase before recording usage.");
+  const batchStock = input.batchId ? calculateBatchAllocatedStock(item.id, input.batchId, purchases, movements, item) : null;
+  const farmStock = !input.batchId ? calculateInventoryBalances([item], purchases, movements).balances[0] : null;
+  const availableQuantity = batchStock?.quantity ?? farmStock?.available ?? 0;
+  const averageUnitCost = batchStock?.averageUnitCost ?? farmStock?.averageUnitCost;
+  if (farmStock && farmStock.financialClassification !== "consumable") throw new Error("Only consumable inventory can be recorded as farm-wide use.");
+  if (input.quantity > availableQuantity + 1e-9) throw new Error(`Only ${availableQuantity} ${item.baseUnit} are available for this use.`);
+  if (averageUnitCost == null) throw new Error("Cost unavailable for this stock. Review the original purchase before recording usage.");
   const created = now();
-  const record = { id: movementId, ownerId: uid, accountId, itemId: item.id, batchId: input.batchId, date: input.date, type: "consumed", quantity: input.quantity, unit: input.unit, totalCost: moneyAmount(batchStock.averageUnitCost * input.quantity), unitCost: batchStock.averageUnitCost, financialClassification: "consumable", source: "batch_usage", reason: "Recorded batch consumption", createdAt: created, updatedAt: created };
+  const record = { id: movementId, ownerId: uid, accountId, itemId: item.id, batchId: input.batchId, batchNameSnapshot: batch?.name, batchNumberSnapshot: batch?.batchNumber, date: input.date, type: "consumed", quantity: input.quantity, unit: input.unit, totalCost: moneyAmount(averageUnitCost * input.quantity), unitCost: averageUnitCost, financialClassification: "consumable", source: input.batchId ? "batch_usage" : "farm_usage", reason: input.batchId ? "Recorded batch consumption" : "Recorded farm-wide consumption", createdAt: created, updatedAt: created };
   await commitLocalFarmChanges(uid, accountId, [{ collectionName: "stockMovements", id: movementId, record }]);
   return movementId;
 }
@@ -578,22 +584,13 @@ export function syncFarmAccount(uid: string, accountId: string, force = false, o
     try {
       onProgress?.("syncing");
       const farmAccount = await getDoc(doc(firestore, "users", uid, "farmAccounts", accountId));
-      if (farmAccount.exists()) {
-        try { await callArmament("registerArmamentBusiness", { sourceApp: "murimi", sourceId: accountId }); }
-        catch (error) { console.warn("Murimi business directory registration will retry at next sync.", error); }
-      }
       while (true) {
         const queued = await getDueFarmChanges(uid, accountId, force);
         if (!queued.length) break;
         for (const item of queued) {
           try {
             const record = await withTimeout(syncQueuedChange(item), 25000);
-            if (item.collectionName === "customers" && item.record && typeof item.record.name === "string") {
-              await callArmament("syncArmamentCustomer", { sourceApp: "murimi", sourceId: accountId, sourceDocumentId: item.recordId });
-            }
-            if (item.collectionName === "transactions" && item.record && typeof item.record.amount === "number" && item.record.amount > 0) {
-              await callArmament("syncArmamentMoneyLedger", { sourceApp: "murimi", sourceId: accountId, sourceCollection: "transactions", sourceDocumentId: item.recordId, sourceRecord: item.operation === "delete" ? item.record : undefined, deleted: item.operation === "delete" });
-            }            if (item.operation === "delete") {
+            if (item.operation === "delete") {
               await setLocalFarmRecordSynced(uid, accountId, item.collectionName, item.recordId);
             } else {
               await setLocalFarmRecordSynced(uid, accountId, item.collectionName, item.recordId, record ?? item.record ?? undefined);

@@ -45,7 +45,7 @@ export default function BatchDetailsScreen() {
   const batchStockEvents = stockMovements.filter((movement) => movement.batchId === batch.id && ["allocated", "consumed", "wasted", "returned"].includes(movement.type)).sort((a, b) => b.date.localeCompare(a.date));
   const summary = calculateBatchSummary(batch, batchDaily, batchExpenses, batchSales, batchWeights, batchSlaughter, purchases, stockMovements);
   const mortalityAnalytics = calculateMortalityAnalytics(batchMortality, batch.initialQuantity);
-  const ageDays = batch.historical ? null : calculateBatchAgeDays(batch.dateStarted);
+  const ageDays = batch.historical ? null : calculateBatchAgeDays(batch.dateStarted, new Date(), batch.startedAt);
   const productionStage = ageDays == null || batch.status === "completed" || batch.status === "archived" ? null : batchProductionStageForAge(ageDays);
   const stageColor = muted;
   const chickQuantity = batch.paidQuantity ?? batch.initialQuantity;
@@ -91,7 +91,7 @@ export default function BatchDetailsScreen() {
     <BatchPage title={ageDays == null ? batch.name : `${batch.name} · Day ${ageDays}`}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.subtitleRow}>
-          <ThemedText type="tiny" color={muted}>{batch.batchNumber ? `${batch.batchNumber} · ` : ""}{batch.enterprise} · {batch.stockType} · Started {batch.dateStarted || "unknown"}{batch.dateStartedEstimated ? " (estimated)" : ""}</ThemedText>
+          <ThemedText type="tiny" color={muted}>{batch.batchNumber ? `${batch.batchNumber} · ` : ""}{batch.enterprise} · {batch.stockType} · Started {batch.dateStarted || "unknown"}{batch.startedAt ? ` at ${batch.startedAt.slice(11, 16)}` : ""}{batch.dateStartedEstimated ? " (estimated)" : ""}</ThemedText>
           <ThemedText type="tiny" color={accent} style={styles.status}>{batch.status.replace("_", " ")}</ThemedText>
         </View>
 
@@ -135,7 +135,7 @@ export default function BatchDetailsScreen() {
           <Metric label="Sales revenue" value={money(summary.revenue)} />
           <Metric label="Cash collected" value={money(summary.cashCollected)} />
           <Metric label="Outstanding payments" value={money(summary.receivables)} />
-          <Metric label="Revenue less recorded costs" value={money(summary.profit)} />
+          <Metric label={summary.profit < 0 ? "Recorded loss" : "Recorded profit"} value={money(Math.abs(summary.profit))} />
           <ThemedText type="tiny" color={muted} style={styles.explainer}>This is not a complete profitability figure: inventory valuation, feed consumption cost allocation, and other unrecorded inputs may be missing.</ThemedText>
           <ThemedText type="tiny" color={muted} style={styles.explainer}>Unpaid sales are receivables; they are not included in cash collected.</ThemedText>
         </View>

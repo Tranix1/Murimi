@@ -12,6 +12,7 @@ import { BatchPage } from "./_components";
 
 const enterprises: { key: EnterpriseType; label: string }[] = [
   { key: "broiler", label: "Broilers" },
+  { key: "layers", label: "Layers" },
   { key: "pigs", label: "Pigs" },
   { key: "fish", label: "Fish" },
   { key: "crops", label: "Crops" },
@@ -35,6 +36,7 @@ export default function CreateBatchScreen() {
   const [supplierId, setSupplierId] = useState<string | undefined>();
   const [saveSupplier, setSaveSupplier] = useState(false);
   const [dateStarted, setDateStarted] = useState(localDate(new Date()));
+  const [startTime, setStartTime] = useState(localTime(new Date()));
   const [quantity, setQuantity] = useState("");
   const [paidQuantity, setPaidQuantity] = useState("");
   const [costPerUnit, setCostPerUnit] = useState("");
@@ -136,8 +138,8 @@ export default function CreateBatchScreen() {
       setError("Sign in and select an account before creating a batch.");
       return;
     }
-    if (!name.trim() || !Number.isInteger(initialQuantity) || initialQuantity <= 0 || !dateStarted.trim()) {
-      setError("Enter a batch name, a valid starting bird count and a start date.");
+    if (!name.trim() || !Number.isInteger(initialQuantity) || initialQuantity <= 0 || !dateStarted.trim() || !/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime)) {
+      setError("Enter a batch name, a valid starting quantity, date and time (24-hour HH:MM).");
       return;
     }
     if (enterprise === "broiler" && stockType === "Custom" && !customBreed.trim()) {
@@ -157,11 +159,11 @@ export default function CreateBatchScreen() {
     const chickQuantity = paidBirds ?? initialQuantity;
     const chickTotal = chickQuantity * (chickCost ?? 0);
     const chickPaid = optionalNumber(chickAmountPaid);
-    if (enterprise === "broiler" && (chickCost === undefined || !Number.isFinite(chickCost) || chickCost <= 0)) {
-      setError("Enter a chick purchase cost per bird greater than zero.");
+    if (["broiler", "layers"].includes(enterprise) && (chickCost === undefined || !Number.isFinite(chickCost) || chickCost <= 0)) {
+      setError(enterprise === "layers" ? "Enter the layer pullet purchase cost per bird." : "Enter a chick purchase cost per bird greater than zero.");
       return;
     }
-    if (enterprise === "broiler" && (!Number.isInteger(chickQuantity) || chickQuantity <= 0)) {
+    if (["broiler", "layers"].includes(enterprise) && (!Number.isInteger(chickQuantity) || chickQuantity <= 0)) {
       setError("Enter at least one bird paid for.");
       return;
     }
@@ -186,6 +188,7 @@ export default function CreateBatchScreen() {
       stockType: enterprise === "broiler" ? stockType === "Custom" ? customBreed.trim() : stockType : stockType.trim() || enterprise,
       supplier: supplier.trim() || undefined,
       dateStarted,
+      startedAt: localTimestamp(dateStarted, startTime),
       initialQuantity,
       paidQuantity: paidBirds ?? initialQuantity,
       costPerUnit: optionalNumber(costPerUnit),
@@ -233,9 +236,9 @@ export default function CreateBatchScreen() {
           notes: line.notes, idempotencyKey: `${id}_${line.key}`,
         });
       }
-      if (enterprise === "broiler" && chickCost !== undefined) {
+      if (["broiler", "layers"].includes(enterprise) && chickCost !== undefined) {
         await savePurchase(user.uid, activeAccountId, {
-          itemName: `Chicks · ${name.trim()}`, category: "chicks", categoryNameSnapshot: "Chicks",
+          itemName: `${enterprise === "layers" ? "Layer pullets" : "Chicks"} · ${name.trim()}`, category: "chicks", categoryNameSnapshot: enterprise === "layers" ? "Layer pullets" : "Chicks",
           itemType: "other", inventoryTracked: false, financialClassification: "operating_expense",
           date: dateStarted, quantity: chickQuantity, unit: "birds", itemCount: chickQuantity,
           pricePerItem: chickCost, totalCost: Math.round(chickTotal * 100) / 100,
@@ -284,8 +287,9 @@ export default function CreateBatchScreen() {
         </>}
         <TouchableOpacity onPress={() => setSaveSupplier(!saveSupplier)} style={[styles.optionalToggle, { borderColor: border, backgroundColor: surface }]} disabled={!!supplierId || !supplier.trim()}><ThemedText type="tiny" color={supplierId ? accent : muted}>{supplierId ? "Saved supplier · linked by ID" : `${saveSupplier ? "☑" : "☐"} Save supplier for future batches`}</ThemedText></TouchableOpacity>
         <FarmDatePicker label="Arrival / start date" value={dateStarted} onChange={setDateStarted} />
-        <FarmField label="Initial birds placed" value={quantity} onChangeText={setQuantity} keyboardType="number-pad" placeholder="Required" />
-        {enterprise === "broiler" ? <><FarmField label="Cost per chick (required)" value={costPerUnit} onChangeText={setCostPerUnit} keyboardType="decimal-pad" placeholder="0.00" /><ThemedText type="tiny" color={muted}>Chick purchase total: {money((Number(paidQuantity) || Number(quantity) || 0) * (Number(costPerUnit) || 0))}</ThemedText><FarmField label="Amount paid for chicks (optional; blank means unpaid)" value={chickAmountPaid} onChangeText={setChickAmountPaid} keyboardType="decimal-pad" placeholder="0.00" /></> : null}
+        <FarmField label="Arrival / start time (24-hour clock)" value={startTime} onChangeText={setStartTime} placeholder="13:00" />
+        <FarmField label={enterprise === "pigs" ? "Initial pigs placed" : enterprise === "fish" ? "Initial fish stocked" : enterprise === "crops" ? "Initial area / quantity" : "Initial birds placed"} value={quantity} onChangeText={setQuantity} keyboardType="number-pad" placeholder="Required" />
+        {enterprise === "broiler" || enterprise === "layers" ? <><FarmField label={enterprise === "layers" ? "Cost per layer pullet (required)" : "Cost per chick (required)"} value={costPerUnit} onChangeText={setCostPerUnit} keyboardType="decimal-pad" placeholder="0.00" /><ThemedText type="tiny" color={muted}>{enterprise === "layers" ? "Pullet" : "Chick"} purchase total: {money((Number(paidQuantity) || Number(quantity) || 0) * (Number(costPerUnit) || 0))}</ThemedText><FarmField label={`Amount paid for ${enterprise === "layers" ? "pullets" : "chicks"} (optional; blank means unpaid)`} value={chickAmountPaid} onChangeText={setChickAmountPaid} keyboardType="decimal-pad" placeholder="0.00" /></> : null}
         <TouchableOpacity onPress={() => setShowOptionalCosts(!showOptionalCosts)} style={[styles.optionalToggle, { borderColor: border, backgroundColor: surface }]}><ThemedText type="defaultSemiBold" color={accent}>{showOptionalCosts ? "− Hide optional initial costs" : "+ Add initial costs (optional)"}</ThemedText></TouchableOpacity>
         {showOptionalCosts && <><FarmField label="Birds paid for (optional)" value={paidQuantity} onChangeText={setPaidQuantity} keyboardType="number-pad" placeholder="Leave blank if same as birds placed" /><ThemedText type="tiny" color={muted}>Use this when you received extra birds that were not charged. Chick cost is based on birds paid for, not birds placed.</ThemedText><FarmField label="Transport cost (optional)" value={transportCost} onChangeText={setTransportCost} keyboardType="decimal-pad" placeholder="0.00" /><FarmField label="Initial setup costs (optional)" value={setupCost} onChangeText={setSetupCost} keyboardType="decimal-pad" placeholder="0.00" /></>}
         <TouchableOpacity onPress={() => { setShowQuickPurchases(!showQuickPurchases); setShowOptionalCosts(true); }} style={[styles.optionalToggle, { borderColor: border, backgroundColor: surface }]}><ThemedText type="defaultSemiBold" color={accent}>{showQuickPurchases ? "− Hide quick consumable purchases" : "+ Add consumable purchases (optional)"}</ThemedText></TouchableOpacity>
@@ -316,6 +320,8 @@ export default function CreateBatchScreen() {
 }
 
 function localDate(date: Date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
+function localTime(date: Date) { return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`; }
+function localTimestamp(date: string, time: string) { const local = new Date(`${date}T${time}:00`); const offset = -local.getTimezoneOffset(); const sign = offset >= 0 ? "+" : "-"; const hours = String(Math.floor(Math.abs(offset) / 60)).padStart(2, "0"); const minutes = String(Math.abs(offset) % 60).padStart(2, "0"); return `${date}T${time}:00${sign}${hours}:${minutes}`; }
 type QuickPurchaseLine = { key: string; itemId: string; itemName: string; categoryId?: string; category: string; unit: string; quantity: number; unitPrice: number; packageCount: number; amountPerItem: number; pricePerItem: number; allocationQuantity: number; paid: boolean; supplierId?: string; supplierName?: string; notes?: string };
 const money = (value: number) => `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const isCountUnit = (unit: string) => ["unit", "units", "item", "items", "piece", "pieces"].includes(unit.trim().toLocaleLowerCase());

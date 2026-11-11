@@ -22,7 +22,7 @@
       "googleServicesFile": "./google-services.json",
       "predictiveBackGestureEnabled": false,
       "package": "com.armament.murimi"
-    },
+    },  
     "web": {
       "output": "static",
       "favicon": "./assets/images/murimi-icon-light.png"

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Alert, ScrollView } from "react-native";
+import { Alert, ScrollView, View } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { BatchPage } from "./_components";
 import { FarmButton, FarmDatePicker, FarmField } from "@/components/farm/FarmComponents";
@@ -14,7 +14,9 @@ export default function WeightEntryScreen() {
   const { batchId } = useLocalSearchParams<{ batchId?: string }>();
   const { user, activeAccountId } = useAuth();
   const { records: batches } = useFarmRecords<Batch>("batches");
+  const { records: allWeights } = useFarmRecords<WeightMeasurement>("weights");
   const batch = batches.find((item) => item.id === batchId);
+  const history = allWeights.filter((item) => item.batchId === batchId).sort((a, b) => b.date.localeCompare(a.date));
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [weights, setWeights] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -49,5 +51,7 @@ export default function WeightEntryScreen() {
     <FarmField label="Sample weights (kg)" value={weights} onChangeText={setWeights} multiline placeholder="For example: 1.05, 1.12, 1.08" />
     {error && <ThemedText color={bad}>{error}</ThemedText>}
     <FarmButton label="Save weights" onPress={() => void save()} disabled={saving} />
+    <ThemedText type="subtitle">Past weights</ThemedText>
+    {history.length ? history.map((entry) => <View key={entry.id} style={{ padding: 12, borderWidth: 1, borderRadius: 12, gap: 5 }}><ThemedText type="defaultSemiBold">{entry.date} · {entry.sampleSize} weighed</ThemedText><ThemedText type="tiny" color={muted}>Average {entry.averageKg.toFixed(2)} kg · min {entry.minimumKg.toFixed(2)} kg · max {entry.maximumKg.toFixed(2)} kg</ThemedText><ThemedText type="tiny" color={muted}>Weights: {entry.weightsKg.map((weight) => `${weight.toFixed(2)} kg`).join(", ")}</ThemedText></View>) : <ThemedText type="tiny" color={muted}>No weight records for this batch yet.</ThemedText>}
   </ScrollView></BatchPage>;
 }

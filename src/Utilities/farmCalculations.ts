@@ -39,7 +39,11 @@ export function average(values: number[]): number | null {
 }
 
 /** Flock age is counted inclusively, so the placement date is Day 1. */
-export function calculateBatchAgeDays(startDate: string, today = new Date()): number | null {
+export function calculateBatchAgeDays(startDate: string, today = new Date(), startedAt?: string): number | null {
+  if (startedAt) {
+    const startTime = new Date(startedAt).getTime();
+    if (Number.isFinite(startTime)) return Math.max(1, Math.floor((today.getTime() - startTime) / 86400000) + 1);
+  }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) return null;
   const [year, month, day] = startDate.split("-").map(Number);
   const start = Date.UTC(year, month - 1, day);

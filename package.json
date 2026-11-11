@@ -64,6 +64,7 @@
     "test:reports": "node --experimental-strip-types --test tests/reportingUtils.test.mjs",
     "test:rules": "firebase emulators:exec --only firestore --project demo-armament-rules \"node --test tests/firestoreRules.test.mjs\"",
     "test:armament": "npm --prefix functions run build && firebase emulators:exec --only auth,firestore,functions --project demo-armament-functions \"node --test tests/armamentFunctions.test.mjs\"",
+    "test:subscription-price": "node --experimental-strip-types --test tests/subscriptionPrice.test.mjs",
     "lint": "expo lint"
   },
   "private": true

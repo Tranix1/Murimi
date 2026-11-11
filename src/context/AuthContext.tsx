@@ -1,5 +1,5 @@
 
-import { getFarmAccountMetadata, saveFarmAccountMetadata } from "@/services/farmRepository";
+import { getFarmAccountMetadata, saveFarmAccountMetadata, syncFarmAccount } from "@/services/farmRepository";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   createContext,
@@ -388,6 +388,24 @@ export function AuthProvider({
 
   const Logout = async (): Promise<boolean> => {
     try {
+      if (!user?.uid) return false;
+
+      // A logout is also a sync boundary. Do not let Firebase sign out while
+      // this device still has queued writes, otherwise a new device can log
+      // in before the old device has uploaded the latest records.
+      const metadataResults = await Promise.all(accounts.map((account) =>
+        saveFarmAccountMetadata(user.uid, account).then(() => true).catch((error) => {
+          console.warn(`Could not save farm account ${account.id} metadata before logout.`, error);
+          return false;
+        })
+      ));
+      const syncResults = await Promise.all(accounts.map((account) => syncFarmAccount(user.uid, account.id, true)));
+      if (metadataResults.some((saved) => !saved) || syncResults.some((result) => !result.success)) {
+        console.warn("Logout was stopped because some farm data is still waiting to sync.");
+        return false;
+      }
+
+      accountRestoreGeneration.current += 1;
       await signOut(getAuth());
 
       setUser(null);

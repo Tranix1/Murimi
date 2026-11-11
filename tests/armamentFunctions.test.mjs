@@ -56,6 +56,16 @@ test("trusted Armament callables enforce business roles, invitations, entitlemen
     assert.equal(unauth.body.error?.status, "UNAUTHENTICATED");
     const unauthPayment = await fetch(functionsBase + "createArmamentSubscriptionPayment", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceApp: "fynage" }) });
     assert.equal(unauthPayment.status, 401, "payment initiation must require a verified Firebase user");
+    const plan = await call("getArmamentSubscriptionPlan", owner.idToken);
+    assert.equal(plan.response.ok, true, JSON.stringify(plan.body));
+    assert.equal(plan.body.result.amountMinor, 100, "shared subscription price is exactly 100 USD cents per month");
+    assert.equal(plan.body.result.currency, "USD");
+    const paymentStatusId = "11111111-1111-4111-8111-111111111111";
+    await env.withSecurityRulesDisabled(async (ctx) => setDoc(doc(ctx.firestore(), `subscriptionPayments/${paymentStatusId}`), {
+      id: paymentStatusId, ownerId: owner.localId, status: "pending", amountMinor: 100, currency: "USD",
+    }));
+    const foreignPaymentStatus = await call("checkArmamentSubscriptionPayment", stranger.idToken, { paymentId: paymentStatusId });
+    assert.equal(foreignPaymentStatus.response.ok, false, "payment status is private to its initiating account");
 
     const registered = await call("registerArmamentBusiness", owner.idToken, { sourceApp: "murimi", sourceId: "farm-a" });
     assert.equal(registered.response.ok, true, JSON.stringify(registered.body));
@@ -66,6 +76,9 @@ test("trusted Armament callables enforce business roles, invitations, entitlemen
 
     const inviteEmployee = await call("inviteArmamentMember", owner.idToken, { businessId, phoneNumber: employee.phoneNumber, role: "employee" });
     assert.equal(inviteEmployee.response.ok, true, JSON.stringify(inviteEmployee.body));
+    await env.withSecurityRulesDisabled(async (ctx) => setDoc(doc(ctx.firestore(), `businesses/${businessId}`), { status: "inactive" }, { merge: true }));
+    assert.equal((await call("respondArmamentInvitation", employee.idToken, { invitationId: inviteEmployee.body.result.invitationId, response: "accepted" })).response.ok, false, "disabled businesses must not grant memberships");
+    await env.withSecurityRulesDisabled(async (ctx) => setDoc(doc(ctx.firestore(), `businesses/${businessId}`), { status: "active" }, { merge: true }));
     const searched = await call("searchArmamentUsers", owner.idToken, { businessId, term: employee.phoneNumber });
     assert.equal(searched.response.ok, true);
     assert.equal(searched.body.result.users[0].uid, employee.localId);
@@ -145,6 +158,8 @@ test("trusted Armament callables enforce business roles, invitations, entitlemen
     assert.equal(retailLedger.get("customerId"), "customer-a");
     assert.equal((await call("readArmamentBusinessLedger", employee.idToken, { businessId: retailRegistration.body.result.businessId })).response.ok, false);
     assert.equal(customerEntry?.get("ownerId"), owner.localId);
+    assert.equal(customerEntry?.get("businessId"), retailRegistration.body.result.businessId);
+    assert.equal(customerEntry?.get("accountId"), "store-a");
 
     const expensePayload = { id: "expense-emulator-1", amountMinor: 725, currency: "USD", category: "rent", description: "Monthly rent", expenseDate: new Date().toISOString() };
     const committedExpense = await call("recordArmamentTengesaExpense", employee.idToken, { businessId: retailRegistration.body.result.businessId, expense: expensePayload });
